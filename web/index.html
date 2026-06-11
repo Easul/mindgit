@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MindGit</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #161b22;
+        --panel-2: #0f1520;
+        --surface: #0d1117;
+        --button: #21262d;
+        --button-primary: #238636;
+        --button-primary-border: #2ea043;
+        --input: #0d1117;
+        --line: #30363d;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --blue: #58a6ff;
+        --yellow: #d29922;
+        --green: #3fb950;
+        --red: #f85149;
+        --active: #1f6feb22;
+        --diff-add-text: #aff5b4;
+        --diff-add-bg: #033a16;
+        --diff-del-text: #ffdcd7;
+        --diff-del-bg: #67060c;
+        --shadow: none;
+      }
+
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg: #f4f0e8;
+        --panel: #fffaf0;
+        --panel-2: #f8f2e7;
+        --surface: #fffdf7;
+        --button: #efe6d6;
+        --button-primary: #1f7a4d;
+        --button-primary-border: #2b9460;
+        --input: #fffdf7;
+        --line: #d8cab6;
+        --text: #262016;
+        --muted: #746957;
+        --blue: #0b63b6;
+        --yellow: #9a6700;
+        --green: #1a7f37;
+        --red: #cf222e;
+        --active: #0b63b618;
+        --diff-add-text: #14532d;
+        --diff-add-bg: #dafbe1;
+        --diff-del-text: #82071e;
+        --diff-del-bg: #ffebe9;
+        --shadow: 0 18px 40px rgba(72, 52, 24, .08);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      button, input, textarea { font: inherit; }
+      button {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--button);
+        color: var(--text);
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--blue); }
+      button.primary { background: var(--button-primary); border-color: var(--button-primary-border); color: white; }
+      button.danger { color: var(--red); }
+
+      .app {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        min-height: 100vh;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .brand { font-weight: 750; letter-spacing: .3px; }
+      .view-toggle { display: flex; gap: 6px; }
+      .view-toggle button.active { border-color: var(--blue); color: var(--blue); }
+      .stat { color: var(--muted); }
+      .stat strong { color: var(--text); font-weight: 650; }
+      .grow { flex: 1; }
+      .search { display: flex; gap: 8px; min-width: 360px; }
+      input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--input);
+        color: var(--text);
+        padding: 8px 10px;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: 300px minmax(0, 1fr) 320px;
+        min-height: 0;
+      }
+      aside, section, .review {
+        min-height: 0;
+        border-right: 1px solid var(--line);
+        background: var(--panel-2);
+      }
+      .review { border-right: 0; background: var(--panel); }
+      .pane-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-weight: 650;
+      }
+      .file-list, .review-body, .search-results { overflow: auto; }
+      .file-list { height: calc(100vh - 119px); }
+      .tree { padding: 6px 0; }
+      .group-name {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        width: 100%;
+        padding: 7px 14px 7px calc(14px + var(--depth, 0) * 1ch);
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: left;
+      }
+      .group-name:hover { color: var(--text); background: var(--active); }
+      .group-name.ignored { color: var(--muted); opacity: .48; }
+      .chevron {
+        width: 9px;
+        height: 9px;
+        margin-left: 2px;
+        border-right: 2px solid var(--blue);
+        border-bottom: 2px solid var(--blue);
+        transform: rotate(-45deg);
+        transition: transform .12s ease;
+      }
+      .chevron.open { transform: rotate(45deg); }
+      .file {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 7px 14px 7px calc(14px + var(--depth, 0) * 1ch);
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        text-align: left;
+      }
+      .file.active { background: var(--active); }
+      .file.ignored { color: var(--muted); opacity: .48; }
+      .file-main {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mini-stat { color: var(--muted); font-size: 12px; }
+      .status-dot {
+        display: inline-flex;
+        width: 7px;
+        height: 7px;
+        margin-left: auto;
+        border-radius: 999px;
+        background: currentColor;
+      }
+      .status { font-weight: 800; }
+      .status.M { color: var(--yellow); }
+      .status.A { color: var(--green); }
+      .status.D { color: var(--red); }
+      .status.U { color: var(--blue); }
+      .status.I { color: var(--muted); }
+
+      .content-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .current-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .tabs { display: flex; gap: 6px; margin-left: auto; }
+      .tabs button.active { border-color: var(--blue); color: var(--blue); }
+      pre, textarea.editor {
+        width: 100%;
+        height: calc(100vh - 121px);
+        margin: 0;
+        padding: 16px;
+        border: 0;
+        background: var(--surface);
+        color: var(--text);
+        overflow: auto;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        tab-size: 2;
+      }
+      textarea.editor { resize: none; outline: none; }
+      .diff-line { display: block; white-space: pre; }
+      .diff-add { color: var(--diff-add-text); background: var(--diff-add-bg); }
+      .diff-del { color: var(--diff-del-text); background: var(--diff-del-bg); }
+      .diff-hunk { color: #79c0ff; }
+      .empty {
+        display: grid;
+        place-items: center;
+        height: calc(100vh - 121px);
+        color: var(--muted);
+      }
+
+      .review-body { padding: 14px; height: calc(100vh - 119px); }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+      .card h3 { margin: 0 0 8px; font-size: 14px; }
+      .card p { margin: 6px 0; color: var(--muted); }
+      .search-results button {
+        display: block;
+        width: 100%;
+        border: 0;
+        border-radius: 0;
+        padding: 8px 12px;
+        background: transparent;
+        text-align: left;
+      }
+      .search-results .where { color: var(--blue); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .search-results .preview { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .commit-list { padding: 6px 0; }
+      .commit-item {
+        display: block;
+        width: 100%;
+        border: 0;
+        border-radius: 0;
+        padding: 9px 14px;
+        background: transparent;
+        text-align: left;
+      }
+      .commit-item.active { background: var(--active); }
+      .commit-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+      .commit-meta { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .commit-files-title { padding: 10px 14px 4px; color: var(--muted); font-size: 12px; font-weight: 650; }
+
+      footer {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 16px;
+        border-top: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--muted);
+      }
+      .message { color: var(--muted); }
+      .message.error { color: var(--red); }
+      .message.ok { color: var(--green); }
+
+      @media (max-width: 900px) {
+        html, body { overflow-x: hidden; }
+        .app {
+          width: 100%;
+          max-width: 100vw;
+          min-height: 100dvh;
+          overflow-x: hidden;
+        }
+        header {
+          flex-wrap: wrap;
+          gap: 8px;
+          padding: 10px;
+          width: 100%;
+          max-width: 100vw;
+          min-width: 0;
+        }
+        .brand { width: 100%; min-width: 0; }
+        .view-toggle { flex: 1 1 100%; }
+        .view-toggle button { flex: 1; }
+        .stat { min-width: 0; font-size: 12px; }
+        .grow { display: none; }
+        .search {
+          order: 2;
+          flex: 1 1 100%;
+          min-width: 0;
+          max-width: 100%;
+        }
+
+        main {
+          display: block;
+          width: 100%;
+          max-width: 100vw;
+          min-width: 0;
+          min-height: auto;
+        }
+        aside, section, .review {
+          width: 100%;
+          min-width: 0;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+        section { overflow: hidden; }
+        .pane-title { padding: 10px 12px; }
+        .file-list {
+          height: 34dvh;
+          min-height: 220px;
+        }
+        .group-name, .file, .commit-item { padding-right: 12px; padding-left: calc(12px + var(--depth, 0) * 1ch); }
+        .content-head {
+          flex-wrap: wrap;
+          padding: 9px 12px;
+        }
+        .current-path { flex: 1 1 100%; }
+        .tabs {
+          width: 100%;
+          margin-left: 0;
+        }
+        .tabs button { flex: 1; }
+        pre, textarea.editor {
+          max-width: 100%;
+          height: 46dvh;
+          min-height: 280px;
+          padding: 12px;
+          font-size: 12px;
+        }
+        .empty { height: 46dvh; min-height: 220px; }
+        .review-body {
+          height: auto;
+          max-height: 34dvh;
+          padding: 12px;
+        }
+        footer {
+          flex-wrap: wrap;
+          gap: 6px;
+          padding: 8px 10px;
+          font-size: 12px;
+        }
+        #root {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+      }
+
+      @media (max-width: 520px) {
+        body { font-size: 13px; }
+        button { padding: 7px 9px; }
+        header { gap: 7px; }
+        .stat { flex: 1 1 calc(50% - 8px); }
+        .search button { flex: 0 0 auto; }
+        .file-list { height: 38dvh; }
+        .mini-stat { display: none; }
+        .commit-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        pre, textarea.editor { height: 50dvh; }
+        .review-body { max-height: 28dvh; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <div class="brand">MindGit</div>
+        <div class="view-toggle">
+          <button id="worktree-view" class="active" type="button">Working Tree</button>
+          <button id="history-view" type="button">History</button>
+        </div>
+        <div class="stat">Branch: <strong id="branch">-</strong></div>
+        <div class="stat">Modified: <strong id="modified">0</strong></div>
+        <div class="stat">Added: <strong id="added">0</strong></div>
+        <div class="stat">Deleted: <strong id="deleted">0</strong></div>
+        <div class="stat"><strong id="lines">+0 -0</strong></div>
+        <button id="theme-toggle" type="button">Light</button>
+        <button id="refresh" type="button">Refresh</button>
+        <div class="grow"></div>
+        <form class="search" id="search-form">
+          <input id="search" placeholder="Search with rg" autocomplete="off" />
+          <button type="submit">Search</button>
+        </form>
+      </header>
+
+      <main>
+        <aside>
+          <div class="pane-title"><span id="change-title">Changes (0)</span></div>
+          <div class="file-list" id="file-list"></div>
+        </aside>
+
+        <section>
+          <div class="content-head">
+            <div class="current-path" id="current-path">Select a changed file</div>
+            <div class="tabs">
+              <button id="diff-tab" class="active" type="button">Diff</button>
+              <button id="edit-tab" type="button">Edit</button>
+              <button id="save" class="primary" type="button" hidden>Save</button>
+            </div>
+          </div>
+          <div id="viewer"><div class="empty">No file selected</div></div>
+        </section>
+
+        <div class="review">
+          <div class="pane-title"><span>Review</span></div>
+          <div class="review-body">
+            <div class="card">
+              <h3>File Review</h3>
+              <p id="review-summary">选择文件后，这里会显示变更摘要、风险提示和快速操作入口。</p>
+            </div>
+            <div class="card">
+              <h3>Search Results</h3>
+              <div class="search-results" id="search-results"><p>输入关键词后使用 rg 搜索。</p></div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <footer>
+        <span id="root">-</span>
+        <span class="message" id="message"></span>
+      </footer>
+    </div>
+
+    <script>
+      const state = {
+        view: 'worktree',
+        status: null,
+        selected: null,
+        mode: 'diff',
+        content: '',
+        theme: localStorage.getItem('mindgit-theme') || 'dark',
+        expandedGroups: new Set(),
+        children: new Map(),
+        history: [],
+        selectedCommit: null,
+        commitFiles: [],
+        selectedCommitFile: null,
+      };
+      const $ = (id) => document.getElementById(id);
+
+      applyTheme(state.theme);
+      $('worktree-view').addEventListener('click', () => setView('worktree'));
+      $('history-view').addEventListener('click', () => setView('history'));
+      $('theme-toggle').addEventListener('click', toggleTheme);
+      $('refresh').addEventListener('click', refresh);
+      $('diff-tab').addEventListener('click', () => setMode('diff'));
+      $('edit-tab').addEventListener('click', () => setMode('edit'));
+      $('save').addEventListener('click', saveFile);
+      $('file-list').addEventListener('click', handleTreeClick);
+      $('search-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        search();
+      });
+
+      refresh();
+
+      async function api(path, options) {
+        const response = await fetch(path, options);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || response.statusText);
+        return data;
+      }
+
+      async function setView(view) {
+        if (state.view === view) return;
+        state.view = view;
+        state.selected = null;
+        state.selectedCommitFile = null;
+        state.mode = 'diff';
+        await refresh();
+      }
+
+      async function refresh() {
+        try {
+          setMessage('Refreshing...');
+          $('worktree-view').classList.toggle('active', state.view === 'worktree');
+          $('history-view').classList.toggle('active', state.view === 'history');
+          if (state.view === 'history') {
+            await loadHistory();
+            renderHistory();
+            setMessage('Updated', 'ok');
+            return;
+          }
+          state.status = await api('/api/status');
+          await refreshLoadedGroups();
+          renderStatus();
+          if (state.selected) {
+            await renderSelected();
+          } else {
+            $('viewer').innerHTML = `<div class="empty">${state.status.files.length ? 'Expand a directory and select a changed file' : 'Working tree clean'}</div>`;
+          }
+          setMessage('Updated', 'ok');
+        } catch (error) {
+          setMessage(error.message, 'error');
+        }
+      }
+
+      function renderStatus() {
+        const status = state.status;
+        $('root').textContent = status.root;
+        $('branch').textContent = status.branch;
+        $('modified').textContent = status.modified;
+        $('added').textContent = status.added + status.untracked;
+        $('deleted').textContent = status.deleted;
+        $('lines').textContent = `+${status.additions} -${status.deletions}`;
+        $('change-title').textContent = `Changes (${status.modified + status.added + status.deleted + status.untracked})`;
+
+        $('file-list').innerHTML = renderEntries(status.files, 0);
+      }
+
+      async function loadHistory() {
+        if (!state.status) {
+          state.status = await api('/api/status');
+        }
+        const data = await api('/api/commits?limit=50');
+        state.history = data.commits || [];
+        if (!state.selectedCommit && state.history.length) {
+          await selectCommit(state.history[0].hash, false);
+        } else if (state.selectedCommit) {
+          const detail = await api(`/api/commit?sha=${encodeURIComponent(state.selectedCommit.hash)}`);
+          state.selectedCommit = detail.commit;
+          state.commitFiles = detail.files || [];
+        }
+      }
+
+      function renderHistory() {
+        $('root').textContent = state.status ? state.status.root : '-';
+        $('branch').textContent = state.status ? state.status.branch : '-';
+        $('modified').textContent = '0';
+        $('added').textContent = '0';
+        $('deleted').textContent = '0';
+        $('lines').textContent = state.selectedCommit ? state.selectedCommit.shortHash : '+0 -0';
+        $('change-title').textContent = `History (${state.history.length})`;
+        $('file-list').innerHTML = `
+          <div class="commit-list">
+            ${state.history.map(renderCommit).join('') || '<div class="empty">No commits</div>'}
+          </div>
+          ${state.selectedCommit ? renderCommitFiles() : ''}`;
+        $('review-summary').textContent = state.selectedCommit
+          ? `${state.selectedCommit.shortHash}: ${state.selectedCommit.subject}`
+          : '选择提交后，这里会显示提交摘要。';
+        if (!state.selectedCommitFile) {
+          $('current-path').textContent = state.selectedCommit ? `${state.selectedCommit.shortHash} files` : 'Select a commit';
+          $('viewer').innerHTML = `<div class="empty">${state.selectedCommit ? 'Select a file from this commit' : 'No commit selected'}</div>`;
+        }
+        $('diff-tab').classList.add('active');
+        $('edit-tab').classList.remove('active');
+        $('save').hidden = true;
+      }
+
+      function renderCommit(commit) {
+        return `
+          <button class="commit-item ${state.selectedCommit && commit.hash === state.selectedCommit.hash ? 'active' : ''}" type="button" data-commit="${escapeAttr(commit.hash)}">
+            <div class="commit-subject">${escapeHTML(commit.subject)}</div>
+            <div class="commit-meta">${escapeHTML(commit.shortHash)} · ${escapeHTML(commit.author)} · ${escapeHTML(formatDate(commit.date))}</div>
+          </button>`;
+      }
+
+      function renderCommitFiles() {
+        return `
+          <div class="commit-files-title">Changed files (${state.commitFiles.length})</div>
+          <div class="tree">
+            ${state.commitFiles.map((file) => renderCommitFile(file)).join('') || '<div class="empty">No files</div>'}
+          </div>`;
+      }
+
+      function renderCommitFile(file) {
+        return `
+          <button class="file ${file.path === state.selectedCommitFile ? 'active' : ''}" title="${escapeHTML(file.path)}" data-commit-path="${escapeAttr(file.path)}" style="--depth: 0">
+            <span class="file-main">
+              <span class="status ${file.status}">${file.status}</span>
+              <span class="file-path">${escapeHTML(file.path)}</span>
+            </span>
+            <span class="mini-stat">+${file.additions} -${file.deletions}</span>
+          </button>`;
+      }
+
+      async function refreshLoadedGroups() {
+        const groups = [...state.expandedGroups].filter(Boolean);
+        const refreshed = await Promise.all(groups.map(async (group) => {
+          const data = await api(`/api/tree?path=${encodeURIComponent(group)}`);
+          return [group, data.files];
+        }));
+        for (const [group, files] of refreshed) {
+          state.children.set(group, files);
+        }
+      }
+
+      function renderEntries(entries, depth) {
+        return `<div class="tree">${entries.map((entry) => entry.isDir ? renderDirectory(entry, depth) : renderFile(entry, depth)).join('')}</div>`;
+      }
+
+      function renderDirectory(dir, depth) {
+        const expanded = state.expandedGroups.has(dir.path);
+        const children = state.children.get(dir.path) || [];
+        return `
+          <div>
+            <button class="group-name ${dir.ignored ? 'ignored' : ''}" type="button" data-group="${escapeAttr(dir.path)}" style="--depth: ${depth}">
+              <span class="chevron ${expanded ? 'open' : ''}"></span>
+              <span>${escapeHTML(displayName(dir.path))}</span>
+              ${isTreeChange(dir) ? `<span class="status ${dir.status}"><span class="status-dot"></span></span>` : ''}
+            </button>
+            ${expanded ? renderEntries(children, depth + 1) : ''}
+          </div>`;
+      }
+
+      function renderFile(file, depth) {
+        return `
+          <button class="file ${file.path === state.selected ? 'active' : ''} ${file.ignored ? 'ignored' : ''}" title="${escapeHTML(file.path)}" data-path="${escapeAttr(file.path)}" style="--depth: ${depth}">
+            <span class="file-main">
+              ${isChanged(file) ? `<span class="status ${file.status}">${file.status}</span>` : ''}
+              <span class="file-path">${escapeHTML(displayName(file.path))}</span>
+            </span>
+            <span class="mini-stat">${isChanged(file) ? `+${file.additions} -${file.deletions}` : ''}</span>
+          </button>`;
+      }
+
+      function displayName(path) {
+        return path.includes('/') ? path.split('/').pop() : path;
+      }
+
+      function isChanged(file) {
+        return Boolean(file.status) && file.status !== 'I' && !file.ignored;
+      }
+
+      function isTreeChange(entry) {
+        return Boolean(entry.status) && entry.status !== 'I';
+      }
+
+      async function handleTreeClick(event) {
+        if (state.view === 'history') {
+          const commit = event.target.closest('[data-commit]');
+          if (commit) {
+            await selectCommit(commit.dataset.commit);
+            return;
+          }
+          const file = event.target.closest('[data-commit-path]');
+          if (file) {
+            await selectCommitFile(file.dataset.commitPath);
+          }
+          return;
+        }
+        const group = event.target.closest('[data-group]');
+        if (group) {
+          const dir = group.dataset.group;
+          if (state.expandedGroups.has(dir)) {
+            state.expandedGroups.delete(dir);
+          } else {
+            if (!state.children.has(dir)) {
+              const data = await api(`/api/tree?path=${encodeURIComponent(dir)}`);
+              state.children.set(dir, data.files);
+            }
+            state.expandedGroups.add(dir);
+          }
+          renderStatus();
+          return;
+        }
+        const file = event.target.closest('[data-path]');
+        if (file) {
+          selectFile(file.dataset.path);
+        }
+      }
+
+      async function selectCommit(sha, shouldRender = true) {
+        const detail = await api(`/api/commit?sha=${encodeURIComponent(sha)}`);
+        state.selectedCommit = detail.commit;
+        state.commitFiles = detail.files || [];
+        state.selectedCommitFile = null;
+        if (shouldRender) {
+          renderHistory();
+        }
+      }
+
+      async function selectCommitFile(path) {
+        if (!state.selectedCommit) return;
+        state.selectedCommitFile = path;
+        $('current-path').textContent = `${state.selectedCommit.shortHash} · ${path}`;
+        const data = await api(`/api/commit-diff?sha=${encodeURIComponent(state.selectedCommit.hash)}&path=${encodeURIComponent(path)}`);
+        $('viewer').innerHTML = `<pre>${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
+        renderHistory();
+      }
+
+      async function selectFile(path) {
+        state.selected = path;
+        state.mode = 'diff';
+        state.expandedGroups.add(groupForPath(path));
+        renderStatus();
+        await renderSelected();
+      }
+
+      function groupForPath(path) {
+        return path.includes('/') ? path.split('/').slice(0, -1).join('/') : '';
+      }
+
+      function toggleTheme() {
+        applyTheme(state.theme === 'dark' ? 'light' : 'dark');
+      }
+
+      function applyTheme(theme) {
+        state.theme = theme;
+        document.documentElement.dataset.theme = theme;
+        localStorage.setItem('mindgit-theme', theme);
+        $('theme-toggle').textContent = theme === 'dark' ? 'Light' : 'Dark';
+      }
+
+      async function setMode(mode) {
+        if (state.view === 'history') return;
+        if (!state.selected) return;
+        state.mode = mode;
+        await renderSelected();
+      }
+
+      async function renderSelected() {
+        if (!state.selected) return;
+        $('current-path').textContent = state.selected;
+        $('diff-tab').classList.toggle('active', state.mode === 'diff');
+        $('edit-tab').classList.toggle('active', state.mode === 'edit');
+        $('save').hidden = state.mode !== 'edit';
+        const file = state.status.files.find((item) => item.path === state.selected);
+        $('review-summary').textContent = file
+          ? `${file.path}: ${file.status}，新增 ${file.additions} 行，删除 ${file.deletions} 行。`
+          : state.selected;
+
+        if (state.mode === 'edit') {
+          const data = await api(`/api/file?path=${encodeURIComponent(state.selected)}`);
+          state.content = data.content;
+          $('viewer').innerHTML = `<textarea class="editor" id="editor" spellcheck="false"></textarea>`;
+          $('editor').value = data.content;
+          $('editor').focus();
+        } else {
+          const data = await api(`/api/diff?path=${encodeURIComponent(state.selected)}`);
+          $('viewer').innerHTML = `<pre>${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
+        }
+      }
+
+      async function saveFile() {
+        if (!state.selected) return;
+        try {
+          setMessage('Saving...');
+          const content = $('editor').value;
+          await api('/api/file', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: state.selected, content }),
+          });
+          state.mode = 'diff';
+          await refresh();
+          setMessage('Saved and diff refreshed', 'ok');
+        } catch (error) {
+          setMessage(error.message, 'error');
+        }
+      }
+
+      async function search() {
+        const query = $('search').value.trim();
+        if (!query) return;
+        try {
+          setMessage('Searching...');
+          const data = await api(`/api/search?q=${encodeURIComponent(query)}`);
+          $('search-results').innerHTML = data.results.length ? data.results.map((result) => `
+            <button data-search-path="${escapeAttr(result.path)}">
+              <div class="where">${escapeHTML(result.path)}:${result.line}:${result.column}</div>
+              <div class="preview">${escapeHTML(result.preview)}</div>
+            </button>`).join('') : '<p>No matches</p>';
+          for (const button of document.querySelectorAll('[data-search-path]')) {
+            button.addEventListener('click', () => selectFile(button.dataset.searchPath));
+          }
+          setMessage(`${data.results.length} matches`, 'ok');
+        } catch (error) {
+          setMessage(error.message, 'error');
+        }
+      }
+
+      function renderDiff(diff) {
+        return diff.split('\n').map((line) => {
+          let cls = 'diff-line';
+          if (line.startsWith('+') && !line.startsWith('+++')) cls += ' diff-add';
+          if (line.startsWith('-') && !line.startsWith('---')) cls += ' diff-del';
+          if (line.startsWith('@@')) cls += ' diff-hunk';
+          return `<span class="${cls}">${escapeHTML(line)}</span>`;
+        }).join('\n');
+      }
+
+      function setMessage(text, type = '') {
+        $('message').textContent = text;
+        $('message').className = `message ${type}`;
+      }
+
+      function formatDate(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString();
+      }
+
+      function escapeHTML(value) {
+        return String(value).replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
+      }
+
+      function escapeAttr(value) {
+        return escapeHTML(value).replace(/'/g, '&#39;');
+      }
+    </script>
+  </body>
+</html>
