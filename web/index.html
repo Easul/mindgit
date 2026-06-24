@@ -76,8 +76,8 @@
         cursor: pointer;
       }
       button:hover { border-color: var(--blue); }
-      button.primary { background: var(--blue); border-color: var(--blue); color: #ffffff; font-weight: 600; text-shadow: 0 0 1px rgba(0,0,0,0.2); }
-      button.primary:hover { background: #6cb6ff; border-color: #6cb6ff; }
+      button.primary { background: #3a7dbf; border-color: #4a8dd0; color: #ffffff; font-weight: 600; text-shadow: 0 0 1px rgba(0,0,0,0.2); }
+      button.primary:hover { background: var(--blue); border-color: var(--blue); }
       button.danger { color: var(--red); }
 
       .app {
@@ -269,7 +269,7 @@
         top: 0;
         height: 100%;
         padding: 16px;
-        padding-left: 0;
+        padding-left: 12px;
         margin: 0;
         border: 0;
         background: transparent;
@@ -935,7 +935,7 @@
           // Calculate line number width and adjust padding
           setTimeout(() => {
             const lineNumberWidth = lineNumbersEl.offsetWidth;
-            editor.style.paddingLeft = `${lineNumberWidth}px`;
+            editor.style.paddingLeft = `${lineNumberWidth + 12}px`;
             highlight.style.left = `${lineNumberWidth}px`;
             highlight.style.width = `calc(100% - ${lineNumberWidth}px)`;
           }, 0);
@@ -1185,7 +1185,7 @@
 
             // Recalculate width if line number digits changed
             const lineNumberWidth = lineNumbersEl.offsetWidth;
-            editor.style.paddingLeft = `${lineNumberWidth}px`;
+            editor.style.paddingLeft = `${lineNumberWidth + 12}px`;
             if (highlightEl) {
               highlightEl.style.left = `${lineNumberWidth}px`;
               highlightEl.style.width = `calc(100% - ${lineNumberWidth}px)`;
