@@ -219,15 +219,38 @@
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         tab-size: 2;
       }
-      textarea.editor { resize: none; outline: none; padding-left: 60px; background: transparent; position: relative; z-index: 2; color: transparent; caret-color: var(--text); }
+      textarea.editor {
+        resize: none;
+        outline: none;
+        padding-left: 60px;
+        background: transparent;
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 2;
+        color: transparent;
+        caret-color: var(--text);
+        white-space: pre;
+      }
+      textarea.editor.wrap-enabled {
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+      textarea.editor.wrap-disabled {
+        white-space: pre;
+        word-wrap: normal;
+        overflow: auto;
+      }
       .editor-wrapper { position: relative; height: calc(100vh - 53px - 48px - 36px); overflow: hidden; background: var(--surface); }
       .editor-line-numbers {
         position: absolute;
         left: 0;
         top: 0;
-        width: 50px;
+        width: 60px;
         height: 100%;
-        padding: 16px 8px;
+        padding: 16px 8px 16px 0;
         background: var(--panel-2);
         color: var(--muted);
         text-align: right;
@@ -236,6 +259,8 @@
         user-select: none;
         border-right: 1px solid var(--line);
         z-index: 1;
+        pointer-events: none;
+        white-space: pre;
       }
       .editor-highlight {
         position: absolute;
@@ -252,9 +277,19 @@
         overflow: auto;
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         pointer-events: none;
+        z-index: 1;
+        white-space: pre;
+      }
+      .editor-highlight.wrap-enabled {
         white-space: pre-wrap;
         word-wrap: break-word;
-        z-index: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+      .editor-highlight.wrap-disabled {
+        white-space: pre;
+        word-wrap: normal;
+        overflow: auto;
       }
       .line-numbers {
         float: left;
@@ -543,6 +578,7 @@
         selectedCommit: null,
         commitFiles: [],
         selectedCommitFile: null,
+        wordWrap: localStorage.getItem('mindgit-wordwrap') === 'true',
       };
       const $ = (id) => document.getElementById(id);
 
@@ -881,41 +917,19 @@
 
           $('viewer').innerHTML = `<div class="editor-wrapper">
             <div class="editor-line-numbers" id="editor-line-numbers">${escapeHTML(lineNumbers)}</div>
-            <pre class="editor-highlight" id="editor-highlight" aria-hidden="true"></pre>
-            <textarea class="editor" id="editor" spellcheck="false"></textarea>
+            <pre class="editor-highlight ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor-highlight" aria-hidden="true"></pre>
+            <textarea class="editor ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor" spellcheck="false"></textarea>
           </div>`;
 
           const editor = $('editor');
           const highlight = $('editor-highlight');
           editor.value = data.content;
 
-          // Update highlight
-          const updateHighlight = () => {
-            const content = editor.value;
-            let highlighted = content;
-            if (language !== 'plaintext' && typeof hljs !== 'undefined') {
-              try {
-                highlighted = hljs.highlight(content, { language, ignoreIllegals: true }).value;
-              } catch (e) {
-                highlighted = escapeHTML(content);
-              }
-            } else {
-              highlighted = escapeHTML(content);
-            }
-            highlight.innerHTML = highlighted;
-          };
-
-          updateHighlight();
-          editor.addEventListener('input', updateHighlight);
-
-          // Sync scroll
-          editor.addEventListener('scroll', () => {
-            highlight.scrollTop = editor.scrollTop;
-            highlight.scrollLeft = editor.scrollLeft;
-          });
-
           editor.focus();
           setupEditorShortcuts(editor);
+
+          // Trigger initial update
+          editor.dispatchEvent(new Event('input'));
         } else {
           if ($('edit-tab').textContent === 'Save') {
             $('edit-tab').textContent = 'Edit';
@@ -1099,6 +1113,7 @@
           setMessage('Saving...');
           const editor = $('editor');
           const content = editor ? editor.value : state.content;
+          console.log('Saving file:', state.selected, 'Content length:', content.length);
           await api('/api/file', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1107,6 +1122,7 @@
           await refresh();
           setMessage('Saved', 'ok');
         } catch (error) {
+          console.error('Save error:', error);
           setMessage(error.message, 'error');
         }
       }
@@ -1144,11 +1160,37 @@
         const lineNumbersEl = $('editor-line-numbers');
         const highlightEl = $('editor-highlight');
 
-        // Update line numbers on content change
-        const updateLineNumbers = () => {
-          const lines = editor.value.split('\n').length;
+        // Update line numbers and highlight on content change
+        const updateEditor = () => {
+          const content = editor.value;
+          const lines = content.split('\n').length;
           const lineNumbers = Array.from({length: lines}, (_, i) => i + 1).join('\n');
           if (lineNumbersEl) lineNumbersEl.textContent = lineNumbers;
+
+          // Update highlight
+          if (highlightEl) {
+            const ext = state.selected.split('.').pop().toLowerCase();
+            const langMap = {
+              js: 'javascript', ts: 'typescript', jsx: 'javascript', tsx: 'typescript',
+              py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java', c: 'c', cpp: 'cpp',
+              cs: 'csharp', php: 'php', swift: 'swift', kt: 'kotlin', scala: 'scala',
+              html: 'html', css: 'css', scss: 'scss', sass: 'sass', less: 'less',
+              xml: 'xml', json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+              md: 'markdown', sql: 'sql', sh: 'bash', bash: 'bash', zsh: 'bash',
+            };
+            const language = langMap[ext] || 'plaintext';
+            let highlighted = content;
+            if (language !== 'plaintext' && typeof hljs !== 'undefined') {
+              try {
+                highlighted = hljs.highlight(content, { language, ignoreIllegals: true }).value;
+              } catch (e) {
+                highlighted = escapeHTML(content);
+              }
+            } else {
+              highlighted = escapeHTML(content);
+            }
+            highlightEl.innerHTML = highlighted;
+          }
         };
 
         // Sync scroll between editor and line numbers/highlight
@@ -1160,12 +1202,32 @@
           }
         });
 
-        editor.addEventListener('input', updateLineNumbers);
+        editor.addEventListener('input', updateEditor);
 
         // Column selection state
         let columnSelectStart = null;
 
         editor.addEventListener('keydown', (e) => {
+          // Alt+Z toggle word wrap
+          if (e.altKey && e.key === 'z') {
+            e.preventDefault();
+            state.wordWrap = !state.wordWrap;
+            localStorage.setItem('mindgit-wordwrap', state.wordWrap);
+
+            const wrapClass = state.wordWrap ? 'wrap-enabled' : 'wrap-disabled';
+            const removeClass = state.wordWrap ? 'wrap-disabled' : 'wrap-enabled';
+
+            editor.classList.remove(removeClass);
+            editor.classList.add(wrapClass);
+            if (highlightEl) {
+              highlightEl.classList.remove(removeClass);
+              highlightEl.classList.add(wrapClass);
+            }
+
+            setMessage(state.wordWrap ? 'Word wrap enabled' : 'Word wrap disabled', 'ok');
+            return;
+          }
+
           // Start column selection mode with Shift+Alt
           if (e.shiftKey && e.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
             e.preventDefault();
@@ -1200,7 +1262,7 @@
             const val = editor.value;
             editor.value = val.substring(0, pos) + '\n' + val.substring(pos);
             editor.selectionStart = editor.selectionEnd = pos + 1;
-            updateLineNumbers();
+            updateEditor();
           } else if (e.ctrlKey && e.key === 'f') {
             e.preventDefault();
             showFindReplace(editor);
@@ -1212,7 +1274,7 @@
             if (editor.selectionStart === editor.selectionEnd) {
               e.preventDefault();
               cutLine(editor);
-              updateLineNumbers();
+              updateEditor();
             }
           } else if (e.ctrlKey && e.key === 'c') {
             // Only intercept if no text is selected
