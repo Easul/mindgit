@@ -296,13 +296,18 @@
         color: var(--muted);
         text-align: right;
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        overflow: hidden;
+        overflow-y: scroll;
+        overflow-x: hidden;
         user-select: none;
         border-right: 1px solid var(--line);
         z-index: 3;
         pointer-events: auto;
         white-space: pre;
         cursor: pointer;
+        scrollbar-width: none;
+      }
+      .editor-line-numbers::-webkit-scrollbar {
+        display: none;
       }
       .editor-line-numbers:hover {
         background: var(--panel);
@@ -1497,35 +1502,57 @@
         // Click line numbers to highlight and jump to line
         if (lineNumbersEl) {
           lineNumbersEl.addEventListener('click', (e) => {
-            const lineText = e.target.textContent;
-            const lineNum = parseInt(lineText);
-            if (!isNaN(lineNum) && lineNum > 0) {
-              // Calculate line position
+            // Get click position relative to line numbers element
+            const rect = lineNumbersEl.getBoundingClientRect();
+            const clickY = e.clientY - rect.top + lineNumbersEl.scrollTop;
+            const lineHeight = parseFloat(getComputedStyle(editor).fontSize) * 1.5; // line-height is 1.5
+            const padding = 16; // top padding
+
+            // Calculate which line was clicked
+            const lineNum = Math.floor((clickY - padding) / lineHeight) + 1;
+
+            if (lineNum > 0) {
+              // Calculate line position in text
               const lines = editor.value.split('\n');
-              let pos = 0;
-              for (let i = 0; i < lineNum - 1; i++) {
-                pos += lines[i].length + 1; // +1 for newline
-              }
+              if (lineNum <= lines.length) {
+                let pos = 0;
+                for (let i = 0; i < lineNum - 1; i++) {
+                  pos += lines[i].length + 1; // +1 for newline
+                }
 
-              // Move cursor to start of line
-              editor.focus();
-              editor.setSelectionRange(pos, pos);
+                // Move cursor to start of line
+                editor.focus();
+                editor.setSelectionRange(pos, pos);
 
-              // Show line highlight
-              if (lineHighlight) {
-                const lineHeight = 1.5; // em, matches line-height in CSS
-                const topOffset = 16 + (lineNum - 1) * lineHeight; // 16px padding + line offset
-                lineHighlight.style.top = `${topOffset}em`;
-                lineHighlight.style.display = 'block';
+                // Show line highlight
+                if (lineHighlight) {
+                  const topOffset = padding / lineHeight + (lineNum - 1) * 1.5; // Convert to em
+                  lineHighlight.style.top = `${topOffset}em`;
+                  lineHighlight.style.display = 'block';
 
-                // Scroll line into view
-                const editorRect = editor.getBoundingClientRect();
-                const lineTop = topOffset * parseFloat(getComputedStyle(editor).fontSize);
-                editor.scrollTop = lineTop - editorRect.height / 2;
+                  // Scroll line into view
+                  const editorRect = editor.getBoundingClientRect();
+                  const lineTop = (lineNum - 1) * lineHeight;
+                  editor.scrollTop = lineTop - editorRect.height / 2 + padding;
+                }
               }
             }
           });
         }
+
+        // Hide line highlight when user starts typing or clicking in editor
+        editor.addEventListener('click', () => {
+          if (lineHighlight) lineHighlight.style.display = 'none';
+        });
+        editor.addEventListener('input', () => {
+          if (lineHighlight) lineHighlight.style.display = 'none';
+        });
+        editor.addEventListener('keydown', (e) => {
+          // Hide on any cursor movement key
+          if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+            if (lineHighlight) lineHighlight.style.display = 'none';
+          }
+        });
 
         // Update line numbers and highlight on content change
         const updateEditor = () => {
