@@ -372,18 +372,13 @@
         color: var(--muted);
         text-align: right;
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        overflow-y: scroll;
-        overflow-x: hidden;
+        overflow: hidden;
         user-select: none;
         border-right: 1px solid var(--line);
         z-index: 3;
         pointer-events: auto;
         white-space: pre;
         cursor: pointer;
-        scrollbar-width: none;
-      }
-      .editor-line-numbers::-webkit-scrollbar {
-        display: none;
       }
       .editor-line-numbers:hover {
         background: var(--panel);
@@ -1526,24 +1521,26 @@
           md: 'markdown', sql: 'sql', sh: 'bash', bash: 'bash', zsh: 'bash',
         };
         const language = langMap[ext] || 'plaintext';
-        let highlighted = content;
 
-        if (language !== 'plaintext' && typeof hljs !== 'undefined') {
-          try {
-            highlighted = hljs.highlight(content, { language, ignoreIllegals: true }).value;
-          } catch (e) {
-            console.error('Highlight error:', e);
-            highlighted = escapeHTML(content);
+        // Highlight each line separately to avoid cross-line span issues
+        const highlightedLines = lines.map(line => {
+          if (language !== 'plaintext' && typeof hljs !== 'undefined') {
+            try {
+              return hljs.highlight(line || ' ', { language, ignoreIllegals: true }).value;
+            } catch (e) {
+              return escapeHTML(line || ' ');
+            }
+          } else {
+            return escapeHTML(line || ' ');
           }
-        } else {
-          highlighted = escapeHTML(content);
-        }
+        });
 
-        // Split highlighted content into lines and wrap each
-        const highlightedLines = highlighted.split('\n');
-        const lineNumbersHTML = lines.map((_, i) => `<span class="line-num" data-line="${i + 1}">${i + 1}</span>`).join('');
+        const lineNumbersHTML = lines.map((_, i) =>
+          `<span class="line-num" data-line="${i + 1}">${i + 1}</span>`
+        ).join('');
+
         const codeContentHTML = highlightedLines.map((line, i) =>
-          `<span class="code-line" data-line="${i + 1}">${line || ' '}</span>`
+          `<span class="code-line" data-line="${i + 1}">${line}</span>`
         ).join('\n');
 
         $('viewer').innerHTML = `<pre><code class="line-numbers">${lineNumbersHTML}</code><code class="code-content">${codeContentHTML}</code></pre>`;
@@ -1675,7 +1672,9 @@
 
         // Sync scroll between editor and line numbers/highlight
         editor.addEventListener('scroll', () => {
-          if (lineNumbersEl) lineNumbersEl.scrollTop = editor.scrollTop;
+          if (lineNumbersEl) {
+            lineNumbersEl.style.transform = `translateY(${-editor.scrollTop}px)`;
+          }
           if (highlightEl) {
             highlightEl.scrollTop = editor.scrollTop;
             highlightEl.scrollLeft = editor.scrollLeft;
