@@ -1233,8 +1233,22 @@
         let columnSelectStart = null;
 
         editor.addEventListener('keydown', (e) => {
+          // Ctrl+Z for undo - handle first to prevent conflicts
+          if (e.ctrlKey && !e.altKey && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+            // Let browser handle undo, but show message
+            setTimeout(() => setMessage('Undo', 'ok'), 50);
+            return;
+          }
+
+          // Ctrl+Shift+Z or Ctrl+Y for redo - handle early
+          if (e.ctrlKey && !e.altKey && ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || e.key === 'y')) {
+            // Let browser handle redo, but show message
+            setTimeout(() => setMessage('Redo', 'ok'), 50);
+            return;
+          }
+
           // Alt+Z toggle word wrap
-          if (e.altKey && e.key === 'z') {
+          if (e.altKey && !e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
             e.preventDefault();
             state.wordWrap = !state.wordWrap;
             localStorage.setItem('mindgit-wordwrap', state.wordWrap);
@@ -1266,16 +1280,6 @@
           // Exit column selection mode
           if (!e.shiftKey || !e.altKey) {
             columnSelectStart = null;
-          }
-
-          // Ctrl+Z for undo (browser default, but ensure it works)
-          if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
-            return;
-          }
-
-          // Ctrl+Shift+Z or Ctrl+Y for redo
-          if (e.ctrlKey && ((e.shiftKey && e.key === 'z') || e.key === 'y')) {
-            return;
           }
 
           if (e.ctrlKey && e.key === 's') {
