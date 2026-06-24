@@ -134,6 +134,32 @@
       .file-list, .review-body, .search-results { overflow: auto; }
       .file-list { height: calc(100vh - 53px - 48px - 36px); }
       .review-body { height: calc(100vh - 53px - 48px); }
+      /* Custom scrollbar for file-list and review-body */
+      .file-list::-webkit-scrollbar,
+      .review-body::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      .file-list::-webkit-scrollbar-track,
+      .review-body::-webkit-scrollbar-track {
+        background: var(--panel-2);
+        border-radius: 4px;
+      }
+      .file-list::-webkit-scrollbar-thumb,
+      .review-body::-webkit-scrollbar-thumb {
+        background: var(--muted);
+        border-radius: 4px;
+        border: 1px solid var(--panel-2);
+      }
+      .file-list::-webkit-scrollbar-thumb:hover,
+      .review-body::-webkit-scrollbar-thumb:hover {
+        background: var(--text);
+      }
+      .file-list,
+      .review-body {
+        scrollbar-width: thin;
+        scrollbar-color: var(--muted) var(--panel-2);
+      }
       .tree { padding: 6px 0; }
       .group-name {
         display: flex;
@@ -259,6 +285,31 @@
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         tab-size: 2;
       }
+      /* Custom scrollbar for pre elements */
+      pre::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+      }
+      pre::-webkit-scrollbar-track {
+        background: var(--panel-2);
+        border-radius: 6px;
+      }
+      pre::-webkit-scrollbar-thumb {
+        background: var(--muted);
+        border-radius: 6px;
+        border: 2px solid var(--panel-2);
+      }
+      pre::-webkit-scrollbar-thumb:hover {
+        background: var(--text);
+      }
+      pre::-webkit-scrollbar-corner {
+        background: var(--panel-2);
+      }
+      /* Firefox scrollbar */
+      pre {
+        scrollbar-width: thin;
+        scrollbar-color: var(--muted) var(--panel-2);
+      }
       textarea.editor {
         resize: none;
         outline: none;
@@ -281,6 +332,31 @@
         white-space: pre;
         word-wrap: normal;
         overflow: auto;
+      }
+      /* Custom scrollbar for editor */
+      textarea.editor::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+      }
+      textarea.editor::-webkit-scrollbar-track {
+        background: var(--panel-2);
+        border-radius: 6px;
+      }
+      textarea.editor::-webkit-scrollbar-thumb {
+        background: var(--muted);
+        border-radius: 6px;
+        border: 2px solid var(--panel-2);
+      }
+      textarea.editor::-webkit-scrollbar-thumb:hover {
+        background: var(--text);
+      }
+      textarea.editor::-webkit-scrollbar-corner {
+        background: var(--panel-2);
+      }
+      /* Firefox scrollbar */
+      textarea.editor {
+        scrollbar-width: thin;
+        scrollbar-color: var(--muted) var(--panel-2);
       }
       .editor-wrapper { position: relative; height: calc(100vh - 53px - 48px - 36px - 40px); overflow: hidden; background: var(--surface); }
       .editor-line-numbers {
