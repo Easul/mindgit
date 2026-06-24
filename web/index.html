@@ -1564,6 +1564,10 @@
               e.preventDefault();
               copyLine(editor);
             }
+          } else if (e.key === 'Tab') {
+            e.preventDefault();
+            handleTabIndent(editor, e.shiftKey);
+            updateEditor();
           }
         });
       }
@@ -1575,6 +1579,81 @@
         const row = lines.length - 1;
         const col = lines[lines.length - 1].length;
         return { row, col, pos };
+      }
+
+      function handleTabIndent(editor, isShiftTab) {
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const text = editor.value;
+        const lines = text.split('\n');
+
+        // Find start and end line numbers
+        let startLine = 0;
+        let endLine = 0;
+        let pos = 0;
+
+        for (let i = 0; i < lines.length; i++) {
+          const lineEnd = pos + lines[i].length;
+          if (pos <= start && start <= lineEnd) startLine = i;
+          if (pos <= end && end <= lineEnd) endLine = i;
+          pos = lineEnd + 1; // +1 for newline
+        }
+
+        // If no selection or single line, handle as normal tab/untab
+        if (start === end || startLine === endLine) {
+          if (isShiftTab) {
+            // Remove indent at cursor position
+            const lineStart = lines.slice(0, startLine).join('\n').length + (startLine > 0 ? 1 : 0);
+            const lineText = lines[startLine];
+
+            if (lineText.startsWith('  ')) {
+              // Remove 2 spaces
+              lines[startLine] = lineText.substring(2);
+              editor.value = lines.join('\n');
+              const removed = 2;
+              const newPos = Math.max(lineStart, start - removed);
+              editor.setSelectionRange(newPos, newPos);
+            } else if (lineText.startsWith('\t')) {
+              // Remove 1 tab
+              lines[startLine] = lineText.substring(1);
+              editor.value = lines.join('\n');
+              const newPos = Math.max(lineStart, start - 1);
+              editor.setSelectionRange(newPos, newPos);
+            }
+          } else {
+            // Insert 2 spaces at cursor
+            editor.value = text.substring(0, start) + '  ' + text.substring(end);
+            editor.setSelectionRange(start + 2, start + 2);
+          }
+          return;
+        }
+
+        // Multi-line selection: indent/unindent all selected lines
+        let newStart = start;
+        let newEnd = end;
+
+        for (let i = startLine; i <= endLine; i++) {
+          if (isShiftTab) {
+            // Remove indent
+            if (lines[i].startsWith('  ')) {
+              lines[i] = lines[i].substring(2);
+              if (i === startLine) newStart = Math.max(0, newStart - 2);
+              newEnd -= 2;
+            } else if (lines[i].startsWith('\t')) {
+              lines[i] = lines[i].substring(1);
+              if (i === startLine) newStart = Math.max(0, newStart - 1);
+              newEnd -= 1;
+            }
+          } else {
+            // Add indent
+            lines[i] = '  ' + lines[i];
+            if (i === startLine) newStart += 2;
+            newEnd += 2;
+          }
+        }
+
+        editor.value = lines.join('\n');
+        editor.setSelectionRange(newStart, newEnd);
       }
 
       function getPositionFromRowCol(editor, row, col) {
