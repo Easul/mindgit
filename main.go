@@ -230,8 +230,35 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := os.ReadFile(filepath.Join(a.root, path))
-	writeJSON(w, FileResponse{Path: path, Content: string(content)}, err)
+	fullPath := filepath.Join(a.root, path)
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	// Check if it's an image file - return binary data directly
+	ext := strings.ToLower(filepath.Ext(path))
+	imageExts := map[string]string{
+		".png":  "image/png",
+		".jpg":  "image/jpeg",
+		".jpeg": "image/jpeg",
+		".gif":  "image/gif",
+		".bmp":  "image/bmp",
+		".webp": "image/webp",
+		".svg":  "image/svg+xml",
+		".ico":  "image/x-icon",
+	}
+
+	if mimeType, isImage := imageExts[ext]; isImage {
+		w.Header().Set("Content-Type", mimeType)
+		w.WriteHeader(http.StatusOK)
+		w.Write(content)
+		return
+	}
+
+	// For text files, return JSON
+	writeJSON(w, FileResponse{Path: path, Content: string(content)}, nil)
 }
 
 func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MindGit</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" id="hljs-dark">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" id="hljs-light" disabled>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
       :root {
         color-scheme: dark;
@@ -79,7 +82,8 @@
       .app {
         display: grid;
         grid-template-rows: auto 1fr auto;
-        min-height: 100vh;
+        height: 100vh;
+        overflow: hidden;
       }
 
       header {
@@ -109,10 +113,10 @@
       main {
         display: grid;
         grid-template-columns: 300px minmax(0, 1fr) 320px;
-        min-height: 0;
+        overflow: hidden;
       }
       aside, section, .review {
-        min-height: 0;
+        overflow: hidden;
         border-right: 1px solid var(--line);
         background: var(--panel-2);
       }
@@ -127,7 +131,8 @@
         font-weight: 650;
       }
       .file-list, .review-body, .search-results { overflow: auto; }
-      .file-list { height: calc(100vh - 119px); }
+      .file-list { height: calc(100vh - 53px - 48px - 36px); }
+      .review-body { height: calc(100vh - 53px - 48px); }
       .tree { padding: 6px 0; }
       .group-name {
         display: flex;
@@ -204,7 +209,7 @@
       .tabs button.active { border-color: var(--blue); color: var(--blue); }
       pre, textarea.editor {
         width: 100%;
-        height: calc(100vh - 121px);
+        height: calc(100vh - 53px - 48px - 36px);
         margin: 0;
         padding: 16px;
         border: 0;
@@ -214,7 +219,54 @@
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         tab-size: 2;
       }
-      textarea.editor { resize: none; outline: none; }
+      textarea.editor { resize: none; outline: none; padding-left: 60px; background: transparent; position: relative; z-index: 2; color: transparent; caret-color: var(--text); }
+      .editor-wrapper { position: relative; height: calc(100vh - 53px - 48px - 36px); overflow: hidden; background: var(--surface); }
+      .editor-line-numbers {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 50px;
+        height: 100%;
+        padding: 16px 8px;
+        background: var(--panel-2);
+        color: var(--muted);
+        text-align: right;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        overflow: hidden;
+        user-select: none;
+        border-right: 1px solid var(--line);
+        z-index: 1;
+      }
+      .editor-highlight {
+        position: absolute;
+        left: 60px;
+        top: 0;
+        width: calc(100% - 60px);
+        height: 100%;
+        padding: 16px;
+        padding-left: 0;
+        margin: 0;
+        border: 0;
+        background: transparent;
+        color: var(--text);
+        overflow: auto;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        pointer-events: none;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        z-index: 1;
+      }
+      .line-numbers {
+        float: left;
+        margin: 0 12px 0 0;
+        padding-right: 12px;
+        border-right: 1px solid var(--line);
+        color: var(--muted);
+        text-align: right;
+        user-select: none;
+      }
+      .code-content { display: block; }
+      .hljs { background: transparent !important; padding: 0 !important; }
       .diff-line { display: block; white-space: pre; }
       .diff-add { color: var(--diff-add-text); background: var(--diff-add-bg); }
       .diff-del { color: var(--diff-del-text); background: var(--diff-del-bg); }
@@ -222,11 +274,52 @@
       .empty {
         display: grid;
         place-items: center;
-        height: calc(100vh - 121px);
+        height: calc(100vh - 53px - 48px - 36px);
         color: var(--muted);
       }
+      .image-viewer {
+        width: 100%;
+        height: calc(100vh - 53px - 48px - 36px);
+        overflow: hidden;
+        background: var(--surface);
+        position: relative;
+        cursor: move;
+      }
+      .image-viewer img {
+        position: absolute;
+        max-width: none;
+        user-select: none;
+        image-rendering: auto;
+      }
+      .image-controls {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        display: flex;
+        gap: 6px;
+        z-index: 10;
+      }
+      .image-controls button {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+      .binary-notice {
+        display: grid;
+        place-items: center;
+        height: calc(100vh - 53px - 48px - 36px);
+        color: var(--muted);
+        text-align: center;
+        padding: 20px;
+      }
+      .binary-notice strong {
+        color: var(--text);
+        font-size: 16px;
+        margin-bottom: 8px;
+      }
 
-      .review-body { padding: 14px; height: calc(100vh - 119px); }
+      .review-body { padding: 14px; height: calc(100vh - 53px - 48px); }
       .card {
         border: 1px solid var(--line);
         border-radius: 12px;
@@ -408,8 +501,8 @@
             <div class="current-path" id="current-path">Select a changed file</div>
             <div class="tabs">
               <button id="diff-tab" class="active" type="button">Diff</button>
+              <button id="full-tab" type="button">Full</button>
               <button id="edit-tab" type="button">Edit</button>
-              <button id="save" class="primary" type="button" hidden>Save</button>
             </div>
           </div>
           <div id="viewer"><div class="empty">No file selected</div></div>
@@ -441,7 +534,7 @@
         view: 'worktree',
         status: null,
         selected: null,
-        mode: 'diff',
+        mode: 'full',
         content: '',
         theme: localStorage.getItem('mindgit-theme') || 'dark',
         expandedGroups: new Set(),
@@ -459,8 +552,8 @@
       $('theme-toggle').addEventListener('click', toggleTheme);
       $('refresh').addEventListener('click', refresh);
       $('diff-tab').addEventListener('click', () => setMode('diff'));
+      $('full-tab').addEventListener('click', () => setMode('full'));
       $('edit-tab').addEventListener('click', () => setMode('edit'));
-      $('save').addEventListener('click', saveFile);
       $('file-list').addEventListener('click', handleTreeClick);
       $('search-form').addEventListener('submit', (event) => {
         event.preventDefault();
@@ -559,8 +652,12 @@
           $('viewer').innerHTML = `<div class="empty">${state.selectedCommit ? 'Select a file from this commit' : 'No commit selected'}</div>`;
         }
         $('diff-tab').classList.add('active');
+        $('full-tab').classList.remove('active');
         $('edit-tab').classList.remove('active');
-        $('save').hidden = true;
+        if ($('edit-tab').textContent === 'Save') {
+          $('edit-tab').textContent = 'Edit';
+          $('edit-tab').classList.remove('primary');
+        }
       }
 
       function renderCommit(commit) {
@@ -697,7 +794,7 @@
 
       async function selectFile(path) {
         state.selected = path;
-        state.mode = 'diff';
+        state.mode = 'full';
         state.expandedGroups.add(groupForPath(path));
         renderStatus();
         await renderSelected();
@@ -716,11 +813,23 @@
         document.documentElement.dataset.theme = theme;
         localStorage.setItem('mindgit-theme', theme);
         $('theme-toggle').textContent = theme === 'dark' ? 'Light' : 'Dark';
+        const darkStyle = $('hljs-dark');
+        const lightStyle = $('hljs-light');
+        if (theme === 'dark') {
+          if (darkStyle) darkStyle.disabled = false;
+          if (lightStyle) lightStyle.disabled = true;
+        } else {
+          if (darkStyle) darkStyle.disabled = true;
+          if (lightStyle) lightStyle.disabled = false;
+        }
       }
 
       async function setMode(mode) {
         if (state.view === 'history') return;
         if (!state.selected) return;
+        if (state.mode === 'edit' && mode !== 'edit') {
+          await saveFile();
+        }
         state.mode = mode;
         await renderSelected();
       }
@@ -729,41 +838,544 @@
         if (!state.selected) return;
         $('current-path').textContent = state.selected;
         $('diff-tab').classList.toggle('active', state.mode === 'diff');
+        $('full-tab').classList.toggle('active', state.mode === 'full');
         $('edit-tab').classList.toggle('active', state.mode === 'edit');
-        $('save').hidden = state.mode !== 'edit';
+
         const file = state.status.files.find((item) => item.path === state.selected);
         $('review-summary').textContent = file
           ? `${file.path}: ${file.status}，新增 ${file.additions} 行，删除 ${file.deletions} 行。`
           : state.selected;
 
+        // Check if file is binary or image
+        const isBinary = isLikelyBinary(state.selected);
+        const isImage = isImageFile(state.selected);
+
         if (state.mode === 'edit') {
+          if (isBinary) {
+            $('viewer').innerHTML = `<div class="binary-notice"><div><strong>Cannot Edit Binary File</strong><p>This file type cannot be edited in the browser.</p></div></div>`;
+            $('edit-tab').textContent = 'Edit';
+            $('edit-tab').classList.remove('primary');
+            return;
+          }
+
+          if ($('edit-tab').textContent !== 'Save') {
+            $('edit-tab').textContent = 'Save';
+            $('edit-tab').classList.add('primary');
+          }
           const data = await api(`/api/file?path=${encodeURIComponent(state.selected)}`);
           state.content = data.content;
-          $('viewer').innerHTML = `<textarea class="editor" id="editor" spellcheck="false"></textarea>`;
-          $('editor').value = data.content;
-          $('editor').focus();
+          const lines = data.content.split('\n').length;
+          const lineNumbers = Array.from({length: lines}, (_, i) => i + 1).join('\n');
+
+          // Get syntax highlighting
+          const ext = state.selected.split('.').pop().toLowerCase();
+          const langMap = {
+            js: 'javascript', ts: 'typescript', jsx: 'javascript', tsx: 'typescript',
+            py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java', c: 'c', cpp: 'cpp',
+            cs: 'csharp', php: 'php', swift: 'swift', kt: 'kotlin', scala: 'scala',
+            html: 'html', css: 'css', scss: 'scss', sass: 'sass', less: 'less',
+            xml: 'xml', json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+            md: 'markdown', sql: 'sql', sh: 'bash', bash: 'bash', zsh: 'bash',
+          };
+          const language = langMap[ext] || 'plaintext';
+
+          $('viewer').innerHTML = `<div class="editor-wrapper">
+            <div class="editor-line-numbers" id="editor-line-numbers">${escapeHTML(lineNumbers)}</div>
+            <pre class="editor-highlight" id="editor-highlight" aria-hidden="true"></pre>
+            <textarea class="editor" id="editor" spellcheck="false"></textarea>
+          </div>`;
+
+          const editor = $('editor');
+          const highlight = $('editor-highlight');
+          editor.value = data.content;
+
+          // Update highlight
+          const updateHighlight = () => {
+            const content = editor.value;
+            let highlighted = content;
+            if (language !== 'plaintext' && typeof hljs !== 'undefined') {
+              try {
+                highlighted = hljs.highlight(content, { language, ignoreIllegals: true }).value;
+              } catch (e) {
+                highlighted = escapeHTML(content);
+              }
+            } else {
+              highlighted = escapeHTML(content);
+            }
+            highlight.innerHTML = highlighted;
+          };
+
+          updateHighlight();
+          editor.addEventListener('input', updateHighlight);
+
+          // Sync scroll
+          editor.addEventListener('scroll', () => {
+            highlight.scrollTop = editor.scrollTop;
+            highlight.scrollLeft = editor.scrollLeft;
+          });
+
+          editor.focus();
+          setupEditorShortcuts(editor);
         } else {
-          const data = await api(`/api/diff?path=${encodeURIComponent(state.selected)}`);
-          $('viewer').innerHTML = `<pre>${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
+          if ($('edit-tab').textContent === 'Save') {
+            $('edit-tab').textContent = 'Edit';
+            $('edit-tab').classList.remove('primary');
+          }
+          if (state.mode === 'full') {
+            if (isImage) {
+              renderImageViewer(state.selected);
+            } else if (isBinary) {
+              $('viewer').innerHTML = `<div class="binary-notice"><div><strong>Binary File</strong><p>This file cannot be displayed as text.</p></div></div>`;
+            } else {
+              const data = await api(`/api/file?path=${encodeURIComponent(state.selected)}`);
+              renderFullContent(data.content, state.selected);
+            }
+          } else {
+            const data = await api(`/api/diff?path=${encodeURIComponent(state.selected)}`);
+            $('viewer').innerHTML = `<pre>${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
+          }
         }
+      }
+
+      function isImageFile(path) {
+        const ext = path.split('.').pop().toLowerCase();
+        return ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'].includes(ext);
+      }
+
+      function isLikelyBinary(path) {
+        const ext = path.split('.').pop().toLowerCase();
+        const binaryExts = [
+          'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'ico', 'svg',
+          'zip', 'tar', 'gz', 'rar', '7z', 'bz2', 'xz',
+          'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+          'exe', 'dll', 'so', 'dylib', 'bin',
+          'wasm', 'pyc', 'class', 'jar',
+          'mp3', 'mp4', 'avi', 'mov', 'mkv', 'wav', 'flac',
+          'ttf', 'otf', 'woff', 'woff2', 'eot',
+        ];
+        return binaryExts.includes(ext);
+      }
+
+      function renderImageViewer(imagePath) {
+        const imageUrl = `/api/file?path=${encodeURIComponent(imagePath)}`;
+        $('viewer').innerHTML = `
+          <div class="image-viewer" id="image-viewer">
+            <div class="image-controls">
+              <button id="zoom-in" type="button">Zoom In</button>
+              <button id="zoom-out" type="button">Zoom Out</button>
+              <button id="zoom-reset" type="button">Reset</button>
+            </div>
+            <img id="viewer-image" src="${imageUrl}" alt="${escapeHTML(imagePath)}">
+          </div>`;
+
+        const viewer = $('image-viewer');
+        const img = $('viewer-image');
+        let scale = 1;
+        let translateX = 0;
+        let translateY = 0;
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+
+        // Center image on load
+        img.addEventListener('load', () => {
+          const containerWidth = viewer.clientWidth;
+          const containerHeight = viewer.clientHeight;
+          const imgWidth = img.naturalWidth;
+          const imgHeight = img.naturalHeight;
+
+          // Calculate initial scale to fit image in viewport
+          const scaleX = containerWidth / imgWidth;
+          const scaleY = containerHeight / imgHeight;
+          scale = Math.min(scaleX, scaleY, 1); // Don't scale up initially
+
+          // Center the image
+          translateX = (containerWidth - imgWidth * scale) / 2;
+          translateY = (containerHeight - imgHeight * scale) / 2;
+          updateImageTransform();
+        });
+
+        function updateImageTransform() {
+          img.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+          img.style.transformOrigin = '0 0';
+        }
+
+        // Zoom controls
+        $('zoom-in').addEventListener('click', () => {
+          const oldScale = scale;
+          scale *= 1.2;
+          // Zoom towards center
+          const centerX = viewer.clientWidth / 2;
+          const centerY = viewer.clientHeight / 2;
+          translateX = centerX - (centerX - translateX) * (scale / oldScale);
+          translateY = centerY - (centerY - translateY) * (scale / oldScale);
+          updateImageTransform();
+        });
+
+        $('zoom-out').addEventListener('click', () => {
+          const oldScale = scale;
+          scale /= 1.2;
+          if (scale < 0.1) scale = 0.1;
+          // Zoom towards center
+          const centerX = viewer.clientWidth / 2;
+          const centerY = viewer.clientHeight / 2;
+          translateX = centerX - (centerX - translateX) * (scale / oldScale);
+          translateY = centerY - (centerY - translateY) * (scale / oldScale);
+          updateImageTransform();
+        });
+
+        $('zoom-reset').addEventListener('click', () => {
+          const containerWidth = viewer.clientWidth;
+          const containerHeight = viewer.clientHeight;
+          const imgWidth = img.naturalWidth;
+          const imgHeight = img.naturalHeight;
+          const scaleX = containerWidth / imgWidth;
+          const scaleY = containerHeight / imgHeight;
+          scale = Math.min(scaleX, scaleY, 1);
+          translateX = (containerWidth - imgWidth * scale) / 2;
+          translateY = (containerHeight - imgHeight * scale) / 2;
+          updateImageTransform();
+        });
+
+        // Mouse wheel zoom
+        viewer.addEventListener('wheel', (e) => {
+          e.preventDefault();
+          const oldScale = scale;
+          const delta = e.deltaY > 0 ? 0.9 : 1.1;
+          scale *= delta;
+          if (scale < 0.1) scale = 0.1;
+          if (scale > 10) scale = 10;
+
+          // Zoom towards mouse position
+          const rect = viewer.getBoundingClientRect();
+          const mouseX = e.clientX - rect.left;
+          const mouseY = e.clientY - rect.top;
+          translateX = mouseX - (mouseX - translateX) * (scale / oldScale);
+          translateY = mouseY - (mouseY - translateY) * (scale / oldScale);
+          updateImageTransform();
+        });
+
+        // Drag to pan - use document-level events to prevent losing drag
+        const handleMouseDown = (e) => {
+          if (e.target === img || e.target === viewer) {
+            e.preventDefault();
+            isDragging = true;
+            startX = e.clientX - translateX;
+            startY = e.clientY - translateY;
+            viewer.style.cursor = 'grabbing';
+          }
+        };
+
+        const handleMouseMove = (e) => {
+          if (isDragging) {
+            e.preventDefault();
+            translateX = e.clientX - startX;
+            translateY = e.clientY - startY;
+            updateImageTransform();
+          }
+        };
+
+        const handleMouseUp = () => {
+          if (isDragging) {
+            isDragging = false;
+            viewer.style.cursor = 'move';
+          }
+        };
+
+        viewer.addEventListener('mousedown', handleMouseDown);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+
+        // Cleanup on viewer change
+        viewer.dataset.cleanup = () => {
+          document.removeEventListener('mousemove', handleMouseMove);
+          document.removeEventListener('mouseup', handleMouseUp);
+        };
       }
 
       async function saveFile() {
         if (!state.selected) return;
         try {
           setMessage('Saving...');
-          const content = $('editor').value;
+          const editor = $('editor');
+          const content = editor ? editor.value : state.content;
           await api('/api/file', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: state.selected, content }),
           });
-          state.mode = 'diff';
           await refresh();
-          setMessage('Saved and diff refreshed', 'ok');
+          setMessage('Saved', 'ok');
         } catch (error) {
           setMessage(error.message, 'error');
         }
+      }
+
+      function renderFullContent(content, filename) {
+        const lines = content.split('\n');
+        const lineNumbers = lines.map((_, i) => i + 1).join('\n');
+        const ext = filename.split('.').pop().toLowerCase();
+        const langMap = {
+          js: 'javascript', ts: 'typescript', jsx: 'javascript', tsx: 'typescript',
+          py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java', c: 'c', cpp: 'cpp',
+          cs: 'csharp', php: 'php', swift: 'swift', kt: 'kotlin', scala: 'scala',
+          html: 'html', css: 'css', scss: 'scss', sass: 'sass', less: 'less',
+          xml: 'xml', json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+          md: 'markdown', sql: 'sql', sh: 'bash', bash: 'bash', zsh: 'bash',
+        };
+        const language = langMap[ext] || 'plaintext';
+        let highlighted = content;
+
+        if (language !== 'plaintext' && typeof hljs !== 'undefined') {
+          try {
+            highlighted = hljs.highlight(content, { language, ignoreIllegals: true }).value;
+          } catch (e) {
+            console.error('Highlight error:', e);
+            highlighted = escapeHTML(content);
+          }
+        } else {
+          highlighted = escapeHTML(content);
+        }
+
+        $('viewer').innerHTML = `<pre><code class="line-numbers">${escapeHTML(lineNumbers)}</code><code class="code-content">${highlighted}</code></pre>`;
+      }
+
+      function setupEditorShortcuts(editor) {
+        const lineNumbersEl = $('editor-line-numbers');
+        const highlightEl = $('editor-highlight');
+
+        // Update line numbers on content change
+        const updateLineNumbers = () => {
+          const lines = editor.value.split('\n').length;
+          const lineNumbers = Array.from({length: lines}, (_, i) => i + 1).join('\n');
+          if (lineNumbersEl) lineNumbersEl.textContent = lineNumbers;
+        };
+
+        // Sync scroll between editor and line numbers/highlight
+        editor.addEventListener('scroll', () => {
+          if (lineNumbersEl) lineNumbersEl.scrollTop = editor.scrollTop;
+          if (highlightEl) {
+            highlightEl.scrollTop = editor.scrollTop;
+            highlightEl.scrollLeft = editor.scrollLeft;
+          }
+        });
+
+        editor.addEventListener('input', updateLineNumbers);
+
+        // Column selection state
+        let columnSelectStart = null;
+
+        editor.addEventListener('keydown', (e) => {
+          // Start column selection mode with Shift+Alt
+          if (e.shiftKey && e.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+            e.preventDefault();
+            if (!columnSelectStart) {
+              columnSelectStart = getCursorPosition(editor);
+            }
+            handleColumnSelection(editor, columnSelectStart, e.key);
+            return;
+          }
+
+          // Exit column selection mode
+          if (!e.shiftKey || !e.altKey) {
+            columnSelectStart = null;
+          }
+
+          // Ctrl+Z for undo (browser default, but ensure it works)
+          if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+            return;
+          }
+
+          // Ctrl+Shift+Z or Ctrl+Y for redo
+          if (e.ctrlKey && ((e.shiftKey && e.key === 'z') || e.key === 'y')) {
+            return;
+          }
+
+          if (e.ctrlKey && e.key === 's') {
+            e.preventDefault();
+            saveFile();
+          } else if (e.ctrlKey && e.key === 'Enter') {
+            e.preventDefault();
+            const pos = editor.selectionStart;
+            const val = editor.value;
+            editor.value = val.substring(0, pos) + '\n' + val.substring(pos);
+            editor.selectionStart = editor.selectionEnd = pos + 1;
+            updateLineNumbers();
+          } else if (e.ctrlKey && e.key === 'f') {
+            e.preventDefault();
+            showFindReplace(editor);
+          } else if (e.ctrlKey && e.key === 'g') {
+            e.preventDefault();
+            showGotoLine(editor);
+          } else if (e.ctrlKey && e.key === 'x') {
+            // Only intercept if no text is selected
+            if (editor.selectionStart === editor.selectionEnd) {
+              e.preventDefault();
+              cutLine(editor);
+              updateLineNumbers();
+            }
+          } else if (e.ctrlKey && e.key === 'c') {
+            // Only intercept if no text is selected
+            if (editor.selectionStart === editor.selectionEnd) {
+              e.preventDefault();
+              copyLine(editor);
+            }
+          }
+        });
+      }
+
+      function getCursorPosition(editor) {
+        const text = editor.value;
+        const pos = editor.selectionStart;
+        const lines = text.substring(0, pos).split('\n');
+        const row = lines.length - 1;
+        const col = lines[lines.length - 1].length;
+        return { row, col, pos };
+      }
+
+      function getPositionFromRowCol(editor, row, col) {
+        const lines = editor.value.split('\n');
+        if (row < 0) row = 0;
+        if (row >= lines.length) row = lines.length - 1;
+        const line = lines[row];
+        if (col > line.length) col = line.length;
+        let pos = 0;
+        for (let i = 0; i < row; i++) {
+          pos += lines[i].length + 1; // +1 for newline
+        }
+        pos += col;
+        return pos;
+      }
+
+      function handleColumnSelection(editor, start, key) {
+        const current = getCursorPosition(editor);
+        let targetRow = current.row;
+        let targetCol = current.col;
+
+        switch (key) {
+          case 'ArrowLeft':
+            targetCol = Math.max(0, current.col - 1);
+            break;
+          case 'ArrowRight':
+            targetCol = current.col + 1;
+            break;
+          case 'ArrowUp':
+            targetRow = Math.max(0, current.row - 1);
+            break;
+          case 'ArrowDown':
+            targetRow = current.row + 1;
+            break;
+        }
+
+        // Perform rectangular selection
+        const lines = editor.value.split('\n');
+        const minRow = Math.min(start.row, targetRow);
+        const maxRow = Math.max(start.row, targetRow);
+        const minCol = Math.min(start.col, targetCol);
+        const maxCol = Math.max(start.col, targetCol);
+
+        // Build the rectangular selection by taking slices from each line
+        let selectedText = [];
+        for (let r = minRow; r <= maxRow && r < lines.length; r++) {
+          const line = lines[r];
+          const startCol = Math.min(minCol, line.length);
+          const endCol = Math.min(maxCol, line.length);
+          selectedText.push(line.substring(startCol, endCol));
+        }
+
+        // Set selection range - standard textarea doesn't support true rectangular selection
+        // but we can approximate by selecting from start to end position
+        const selStart = getPositionFromRowCol(editor, minRow, minCol);
+        const selEnd = getPositionFromRowCol(editor, targetRow, targetCol);
+
+        if (selStart <= selEnd) {
+          editor.selectionStart = selStart;
+          editor.selectionEnd = selEnd;
+        } else {
+          editor.selectionStart = selEnd;
+          editor.selectionEnd = selStart;
+        }
+      }
+
+      function getCurrentLine(editor) {
+        const pos = editor.selectionStart;
+        const text = editor.value;
+        const lines = text.split('\n');
+
+        // Find which line the cursor is on
+        let currentPos = 0;
+        let lineIndex = 0;
+        for (let i = 0; i < lines.length; i++) {
+          const lineLength = lines[i].length + 1; // +1 for newline
+          if (currentPos + lineLength > pos || i === lines.length - 1) {
+            lineIndex = i;
+            break;
+          }
+          currentPos += lineLength;
+        }
+
+        const line = lines[lineIndex] || '';
+        return { lineIndex, line, lines, lineStartPos: currentPos };
+      }
+
+      function cutLine(editor) {
+        const { lineIndex, line, lines, lineStartPos } = getCurrentLine(editor);
+        navigator.clipboard.writeText(line + '\n').then(() => {
+          lines.splice(lineIndex, 1);
+          editor.value = lines.join('\n');
+
+          // Trigger input event to update highlight
+          editor.dispatchEvent(new Event('input'));
+
+          // Position cursor at start of current line (or previous line if we deleted last)
+          const newLineIndex = Math.min(lineIndex, lines.length - 1);
+          let pos = 0;
+          for (let i = 0; i < newLineIndex; i++) {
+            pos += lines[i].length + 1;
+          }
+          editor.selectionStart = editor.selectionEnd = pos;
+        }).catch(err => console.error('Failed to cut line:', err));
+      }
+
+      function copyLine(editor) {
+        const { line } = getCurrentLine(editor);
+        navigator.clipboard.writeText(line + '\n').then(() => {
+          // Success
+        }).catch(err => console.error('Failed to copy line:', err));
+      }
+
+      function showFindReplace(editor) {
+        const query = prompt('Find:');
+        if (!query) return;
+        const replace = prompt('Replace with (leave empty to skip replace):');
+        if (replace !== null && replace !== '') {
+          editor.value = editor.value.replaceAll(query, replace);
+        } else {
+          const index = editor.value.indexOf(query);
+          if (index !== -1) {
+            editor.focus();
+            editor.selectionStart = index;
+            editor.selectionEnd = index + query.length;
+          } else {
+            alert('Not found');
+          }
+        }
+      }
+
+      function showGotoLine(editor) {
+        const line = prompt('Go to line:');
+        if (!line) return;
+        const lineNum = parseInt(line, 10);
+        if (isNaN(lineNum)) return;
+        const lines = editor.value.split('\n');
+        if (lineNum < 1 || lineNum > lines.length) {
+          alert(`Line must be between 1 and ${lines.length}`);
+          return;
+        }
+        const pos = lines.slice(0, lineNum - 1).join('\n').length + (lineNum > 1 ? 1 : 0);
+        editor.focus();
+        editor.selectionStart = editor.selectionEnd = pos;
+        editor.scrollTop = editor.scrollHeight * ((lineNum - 1) / lines.length);
       }
 
       async function search() {
