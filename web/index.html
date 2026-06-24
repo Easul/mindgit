@@ -949,10 +949,26 @@
         const editor = $('editor');
         const viewer = $('viewer');
 
+        // Default scroll values
+        let scrollTop = 0;
+        let scrollLeft = 0;
+
+        // Get scroll position from pre element (Diff/Full) or viewer itself
+        if (viewer) {
+          const pre = viewer.querySelector('pre');
+          if (pre) {
+            scrollTop = pre.scrollTop;
+            scrollLeft = pre.scrollLeft;
+          } else {
+            scrollTop = viewer.scrollTop;
+            scrollLeft = viewer.scrollLeft;
+          }
+        }
+
         state.tabStates[state.selected] = {
           mode: state.mode,
-          scrollTop: viewer ? viewer.scrollTop : 0,
-          scrollLeft: viewer ? viewer.scrollLeft : 0,
+          scrollTop: scrollTop,
+          scrollLeft: scrollLeft,
         };
 
         // Save editor-specific state
@@ -963,14 +979,18 @@
           state.tabStates[state.selected].editorScrollLeft = editor.scrollLeft;
         }
 
-        // Save image viewer state
+        // Save image viewer state (extract from transform)
         const imageViewer = viewer?.querySelector('.image-viewer');
         if (imageViewer) {
           const img = imageViewer.querySelector('img');
-          if (img) {
-            state.tabStates[state.selected].imageZoom = parseFloat(img.style.width) || 100;
-            state.tabStates[state.selected].imageLeft = parseFloat(img.style.left) || 0;
-            state.tabStates[state.selected].imageTop = parseFloat(img.style.top) || 0;
+          if (img && img.style.transform) {
+            // Parse transform: translate(X, Y) scale(Z)
+            const transformMatch = img.style.transform.match(/translate\(([^,]+)px,\s*([^)]+)px\)\s*scale\(([^)]+)\)/);
+            if (transformMatch) {
+              state.tabStates[state.selected].imageTranslateX = parseFloat(transformMatch[1]);
+              state.tabStates[state.selected].imageTranslateY = parseFloat(transformMatch[2]);
+              state.tabStates[state.selected].imageScale = parseFloat(transformMatch[3]);
+            }
           }
         }
       }
@@ -981,11 +1001,20 @@
         const savedState = state.tabStates[path];
 
         // Restore mode if saved
-        if (savedState.mode) {
+        if (savedState.mode && savedState.mode !== state.mode) {
           state.mode = savedState.mode;
         }
 
-        // Restore scroll and cursor after render
+        // Restore image viewer state - store for renderImageViewer to use
+        if (savedState.imageScale !== undefined) {
+          state._pendingImageState = {
+            scale: savedState.imageScale,
+            translateX: savedState.imageTranslateX,
+            translateY: savedState.imageTranslateY
+          };
+        }
+
+        // Restore scroll and cursor after render completes
         setTimeout(() => {
           const editor = $('editor');
           const viewer = $('viewer');
@@ -1000,23 +1029,20 @@
             editor.focus();
           }
 
-          // Restore viewer scroll
+          // Restore viewer scroll (for Diff/Full modes)
           if (viewer && savedState.scrollTop !== undefined) {
-            viewer.scrollTop = savedState.scrollTop;
-            viewer.scrollLeft = savedState.scrollLeft;
-          }
-
-          // Restore image viewer state
-          const imageViewer = viewer?.querySelector('.image-viewer');
-          if (imageViewer && savedState.imageZoom !== undefined) {
-            const img = imageViewer.querySelector('img');
-            if (img) {
-              img.style.width = savedState.imageZoom + '%';
-              img.style.left = savedState.imageLeft + 'px';
-              img.style.top = savedState.imageTop + 'px';
+            const pre = viewer.querySelector('pre');
+            if (pre) {
+              // Scroll the pre element for Diff/Full views
+              pre.scrollTop = savedState.scrollTop;
+              pre.scrollLeft = savedState.scrollLeft;
+            } else {
+              // Or scroll the viewer itself
+              viewer.scrollTop = savedState.scrollTop;
+              viewer.scrollLeft = savedState.scrollLeft;
             }
           }
-        }, 50);
+        }, 100);
       }
 
       async function selectFile(path) {
@@ -1209,6 +1235,16 @@
           const containerHeight = viewer.clientHeight;
           const imgWidth = img.naturalWidth;
           const imgHeight = img.naturalHeight;
+
+          // Check if we have saved state to restore
+          if (state._pendingImageState) {
+            scale = state._pendingImageState.scale;
+            translateX = state._pendingImageState.translateX;
+            translateY = state._pendingImageState.translateY;
+            delete state._pendingImageState;
+            updateImageTransform();
+            return;
+          }
 
           // Calculate initial scale to fit image in viewport
           const scaleX = containerWidth / imgWidth;
