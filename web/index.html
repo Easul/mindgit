@@ -230,6 +230,9 @@
         padding: 10px 14px;
         border-bottom: 1px solid var(--line);
         background: var(--panel);
+        position: sticky;
+        top: calc(53px + 40px);
+        z-index: 9;
       }
       .file-tabs {
         display: flex;
@@ -241,6 +244,12 @@
         padding: 4px 14px;
         border-bottom: 1px solid var(--line);
         background: var(--panel-2);
+        position: sticky;
+        top: 53px;
+        z-index: 10;
+      }
+      .file-tabs::-webkit-scrollbar {
+        height: 0;
       }
       .file-tab {
         display: flex;
