@@ -230,9 +230,6 @@
         padding: 10px 14px;
         border-bottom: 1px solid var(--line);
         background: var(--panel);
-        position: sticky;
-        top: calc(53px + 40px);
-        z-index: 9;
       }
       .file-tabs {
         display: flex;
@@ -244,9 +241,6 @@
         padding: 4px 14px;
         border-bottom: 1px solid var(--line);
         background: var(--panel-2);
-        position: sticky;
-        top: 53px;
-        z-index: 10;
       }
       .file-tabs::-webkit-scrollbar {
         height: 0;
@@ -389,6 +383,14 @@
         white-space: pre;
         cursor: pointer;
       }
+      .editor-line-num {
+        display: block;
+        cursor: pointer;
+        line-height: 1.5;
+      }
+      .editor-line-num:hover {
+        color: var(--text);
+      }
       .editor-line-numbers:hover {
         background: var(--panel);
       }
@@ -444,14 +446,19 @@
         display: block;
         padding: 0 4px;
         transition: background 0.1s;
+        line-height: 1.5;
       }
       .line-numbers .line-num:hover {
         background: var(--button);
       }
-      .code-content { display: block; }
+      .code-content {
+        display: block;
+        line-height: 1.5;
+      }
       .code-line {
         display: block;
         white-space: pre;
+        line-height: 1.5;
       }
       .code-line.highlighted {
         background: rgba(59, 130, 246, 0.15);
@@ -1256,7 +1263,9 @@
           const data = await api(`/api/file?path=${encodeURIComponent(state.selected)}`);
           state.content = data.content;
           const lines = data.content.split('\n').length;
-          const lineNumbers = Array.from({length: lines}, (_, i) => i + 1).join('\n');
+          const lineNumbers = Array.from({length: lines}, (_, i) =>
+            `<span class="editor-line-num" data-line="${i + 1}">${i + 1}</span>`
+          ).join('\n');
 
           // Get syntax highlighting
           const ext = state.selected.split('.').pop().toLowerCase();
@@ -1272,7 +1281,7 @@
 
           $('viewer').innerHTML = `<div class="editor-wrapper">
             <div class="editor-current-line-highlight" id="editor-line-highlight" style="display: none;"></div>
-            <div class="editor-line-numbers" id="editor-line-numbers">${escapeHTML(lineNumbers)}</div>
+            <div class="editor-line-numbers" id="editor-line-numbers">${lineNumbers}</div>
             <pre class="editor-highlight ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor-highlight" aria-hidden="true"></pre>
             <textarea class="editor ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor" spellcheck="false"></textarea>
           </div>`;
@@ -1557,14 +1566,15 @@
         // Add click handlers for line highlighting
         document.querySelectorAll('.line-num').forEach(lineNum => {
           lineNum.addEventListener('click', () => {
-            const lineNumber = lineNum.dataset.line;
+            const lineNumber = parseInt(lineNum.dataset.line);
             // Remove previous highlights
             document.querySelectorAll('.code-line.highlighted').forEach(el => el.classList.remove('highlighted'));
-            // Highlight clicked line
-            const codeLine = document.querySelector(`.code-line[data-line="${lineNumber}"]`);
-            if (codeLine) {
-              codeLine.classList.add('highlighted');
-              codeLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Highlight clicked line - find by iterating to ensure we get the exact one
+            const codeLines = document.querySelectorAll('.code-line');
+            const targetLine = codeLines[lineNumber - 1];
+            if (targetLine) {
+              targetLine.classList.add('highlighted');
+              targetLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
           });
         });
@@ -1584,39 +1594,36 @@
         // Click line numbers to highlight and jump to line
         if (lineNumbersEl) {
           lineNumbersEl.addEventListener('click', (e) => {
-            // Get click position relative to line numbers element
-            const rect = lineNumbersEl.getBoundingClientRect();
-            const clickY = e.clientY - rect.top + lineNumbersEl.scrollTop;
-            const lineHeight = parseFloat(getComputedStyle(editor).fontSize) * 1.5; // line-height is 1.5
-            const padding = 16; // top padding
+            // Check if clicked on a line number span
+            const lineNumSpan = e.target.closest('.editor-line-num');
+            if (!lineNumSpan) return;
 
-            // Calculate which line was clicked
-            const lineNum = Math.floor((clickY - padding) / lineHeight) + 1;
+            const lineNum = parseInt(lineNumSpan.dataset.line);
+            const lines = editor.value.split('\n');
 
-            if (lineNum > 0) {
+            if (lineNum > 0 && lineNum <= lines.length) {
               // Calculate line position in text
-              const lines = editor.value.split('\n');
-              if (lineNum <= lines.length) {
-                let pos = 0;
-                for (let i = 0; i < lineNum - 1; i++) {
-                  pos += lines[i].length + 1; // +1 for newline
-                }
+              let pos = 0;
+              for (let i = 0; i < lineNum - 1; i++) {
+                pos += lines[i].length + 1; // +1 for newline
+              }
 
-                // Move cursor to start of line
-                editor.focus();
-                editor.setSelectionRange(pos, pos);
+              // Move cursor to start of line
+              editor.focus();
+              editor.setSelectionRange(pos, pos);
 
-                // Show line highlight
-                if (lineHighlight) {
-                  const topOffset = padding / lineHeight + (lineNum - 1) * 1.5; // Convert to em
-                  lineHighlight.style.top = `${topOffset}em`;
-                  lineHighlight.style.display = 'block';
+              // Show line highlight
+              if (lineHighlight) {
+                const lineHeight = parseFloat(getComputedStyle(editor).fontSize) * 1.5;
+                const padding = 16;
+                const topOffset = padding / lineHeight + (lineNum - 1) * 1.5; // Convert to em
+                lineHighlight.style.top = `${topOffset}em`;
+                lineHighlight.style.display = 'block';
 
-                  // Scroll line into view
-                  const editorRect = editor.getBoundingClientRect();
-                  const lineTop = (lineNum - 1) * lineHeight;
-                  editor.scrollTop = lineTop - editorRect.height / 2 + padding;
-                }
+                // Scroll line into view
+                const editorRect = editor.getBoundingClientRect();
+                const lineTop = (lineNum - 1) * lineHeight;
+                editor.scrollTop = lineTop - editorRect.height / 2 + padding;
               }
             }
           });
@@ -1640,9 +1647,11 @@
         const updateEditor = () => {
           const content = editor.value;
           const lines = content.split('\n').length;
-          const lineNumbers = Array.from({length: lines}, (_, i) => i + 1).join('\n');
+          const lineNumbers = Array.from({length: lines}, (_, i) =>
+            `<span class="editor-line-num" data-line="${i + 1}">${i + 1}</span>`
+          ).join('\n');
           if (lineNumbersEl) {
-            lineNumbersEl.textContent = lineNumbers;
+            lineNumbersEl.innerHTML = lineNumbers;
 
             // Recalculate width if line number digits changed
             const lineNumberWidth = lineNumbersEl.offsetWidth;
