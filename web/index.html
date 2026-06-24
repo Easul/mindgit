@@ -222,7 +222,6 @@
       textarea.editor {
         resize: none;
         outline: none;
-        padding-left: 60px;
         background: transparent;
         position: absolute;
         left: 0;
@@ -248,9 +247,11 @@
         position: absolute;
         left: 0;
         top: 0;
-        width: 60px;
+        width: auto;
+        min-width: 50px;
         height: 100%;
-        padding: 16px 8px 16px 0;
+        padding: 16px 12px 16px 16px;
+        margin-right: 12px;
         background: var(--panel-2);
         color: var(--muted);
         text-align: right;
@@ -264,9 +265,7 @@
       }
       .editor-highlight {
         position: absolute;
-        left: 60px;
         top: 0;
-        width: calc(100% - 60px);
         height: 100%;
         padding: 16px;
         padding-left: 0;
@@ -589,7 +588,13 @@
       $('refresh').addEventListener('click', refresh);
       $('diff-tab').addEventListener('click', () => setMode('diff'));
       $('full-tab').addEventListener('click', () => setMode('full'));
-      $('edit-tab').addEventListener('click', () => setMode('edit'));
+      $('edit-tab').addEventListener('click', async () => {
+        if (state.mode === 'edit' && $('edit-tab').textContent === 'Save') {
+          await saveFile();
+        } else {
+          setMode('edit');
+        }
+      });
       $('file-list').addEventListener('click', handleTreeClick);
       $('search-form').addEventListener('submit', (event) => {
         event.preventDefault();
@@ -923,7 +928,16 @@
 
           const editor = $('editor');
           const highlight = $('editor-highlight');
+          const lineNumbersEl = $('editor-line-numbers');
           editor.value = data.content;
+
+          // Calculate line number width and adjust padding
+          setTimeout(() => {
+            const lineNumberWidth = lineNumbersEl.offsetWidth;
+            editor.style.paddingLeft = `${lineNumberWidth}px`;
+            highlight.style.left = `${lineNumberWidth}px`;
+            highlight.style.width = `calc(100% - ${lineNumberWidth}px)`;
+          }, 0);
 
           editor.focus();
           setupEditorShortcuts(editor);
@@ -1165,7 +1179,17 @@
           const content = editor.value;
           const lines = content.split('\n').length;
           const lineNumbers = Array.from({length: lines}, (_, i) => i + 1).join('\n');
-          if (lineNumbersEl) lineNumbersEl.textContent = lineNumbers;
+          if (lineNumbersEl) {
+            lineNumbersEl.textContent = lineNumbers;
+
+            // Recalculate width if line number digits changed
+            const lineNumberWidth = lineNumbersEl.offsetWidth;
+            editor.style.paddingLeft = `${lineNumberWidth}px`;
+            if (highlightEl) {
+              highlightEl.style.left = `${lineNumberWidth}px`;
+              highlightEl.style.width = `calc(100% - ${lineNumberWidth}px)`;
+            }
+          }
 
           // Update highlight
           if (highlightEl) {
