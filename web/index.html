@@ -1128,13 +1128,29 @@
           setMessage('Saving...');
           const editor = $('editor');
           const content = editor ? editor.value : state.content;
+
+          // Save cursor position
+          const cursorStart = editor ? editor.selectionStart : 0;
+          const cursorEnd = editor ? editor.selectionEnd : 0;
+
           console.log('Saving file:', state.selected, 'Content length:', content.length);
           await api('/api/file', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: state.selected, content }),
           });
-          await refresh();
+
+          // Only refresh status, don't re-render editor
+          state.status = await api('/api/status');
+          await refreshLoadedGroups();
+          renderStatus();
+
+          // Restore cursor position
+          if (editor) {
+            editor.focus();
+            editor.setSelectionRange(cursorStart, cursorEnd);
+          }
+
           setMessage('Saved', 'ok');
         } catch (error) {
           console.error('Save error:', error);
