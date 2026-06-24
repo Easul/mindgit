@@ -620,6 +620,7 @@
         selectedCommitFile: null,
         wordWrap: localStorage.getItem('mindgit-wordwrap') === 'true',
         openTabs: [],
+        tabStates: {}, // Store state for each tab: cursor, scroll, imageZoom, etc.
       };
       const $ = (id) => document.getElementById(id);
 
@@ -920,6 +921,8 @@
         if (index === -1) return;
 
         state.openTabs.splice(index, 1);
+        // Clean up saved state for this tab
+        delete state.tabStates[path];
 
         // If closing active tab, switch to another tab
         if (path === state.selected) {
@@ -940,7 +943,86 @@
         }
       }
 
+      function saveCurrentTabState() {
+        if (!state.selected) return;
+
+        const editor = $('editor');
+        const viewer = $('viewer');
+
+        state.tabStates[state.selected] = {
+          mode: state.mode,
+          scrollTop: viewer ? viewer.scrollTop : 0,
+          scrollLeft: viewer ? viewer.scrollLeft : 0,
+        };
+
+        // Save editor-specific state
+        if (editor && state.mode === 'edit') {
+          state.tabStates[state.selected].cursorStart = editor.selectionStart;
+          state.tabStates[state.selected].cursorEnd = editor.selectionEnd;
+          state.tabStates[state.selected].editorScrollTop = editor.scrollTop;
+          state.tabStates[state.selected].editorScrollLeft = editor.scrollLeft;
+        }
+
+        // Save image viewer state
+        const imageViewer = viewer?.querySelector('.image-viewer');
+        if (imageViewer) {
+          const img = imageViewer.querySelector('img');
+          if (img) {
+            state.tabStates[state.selected].imageZoom = parseFloat(img.style.width) || 100;
+            state.tabStates[state.selected].imageLeft = parseFloat(img.style.left) || 0;
+            state.tabStates[state.selected].imageTop = parseFloat(img.style.top) || 0;
+          }
+        }
+      }
+
+      function restoreTabState(path) {
+        if (!state.tabStates[path]) return;
+
+        const savedState = state.tabStates[path];
+
+        // Restore mode if saved
+        if (savedState.mode) {
+          state.mode = savedState.mode;
+        }
+
+        // Restore scroll and cursor after render
+        setTimeout(() => {
+          const editor = $('editor');
+          const viewer = $('viewer');
+
+          // Restore editor state
+          if (editor && savedState.cursorStart !== undefined) {
+            editor.setSelectionRange(savedState.cursorStart, savedState.cursorEnd);
+            if (savedState.editorScrollTop !== undefined) {
+              editor.scrollTop = savedState.editorScrollTop;
+              editor.scrollLeft = savedState.editorScrollLeft;
+            }
+            editor.focus();
+          }
+
+          // Restore viewer scroll
+          if (viewer && savedState.scrollTop !== undefined) {
+            viewer.scrollTop = savedState.scrollTop;
+            viewer.scrollLeft = savedState.scrollLeft;
+          }
+
+          // Restore image viewer state
+          const imageViewer = viewer?.querySelector('.image-viewer');
+          if (imageViewer && savedState.imageZoom !== undefined) {
+            const img = imageViewer.querySelector('img');
+            if (img) {
+              img.style.width = savedState.imageZoom + '%';
+              img.style.left = savedState.imageLeft + 'px';
+              img.style.top = savedState.imageTop + 'px';
+            }
+          }
+        }, 50);
+      }
+
       async function selectFile(path) {
+        // Save current tab state before switching
+        saveCurrentTabState();
+
         // Add to tabs if not already open
         if (!state.openTabs.includes(path)) {
           state.openTabs.push(path);
@@ -952,6 +1034,7 @@
         renderStatus();
         renderFileTabs();
         await renderSelected();
+        restoreTabState(path);
       }
 
       function groupForPath(path) {
@@ -984,8 +1067,10 @@
         if (state.mode === 'edit' && mode !== 'edit') {
           await saveFile();
         }
+        saveCurrentTabState();
         state.mode = mode;
         await renderSelected();
+        restoreTabState(state.selected);
       }
 
       async function renderSelected() {
@@ -1303,8 +1388,8 @@
         const lineNumbersEl = $('editor-line-numbers');
         const highlightEl = $('editor-highlight');
 
-        // Undo/Redo stack
-        let undoStack = [editor.value];
+        // Undo/Redo stack with cursor positions
+        let undoStack = [{ value: editor.value, cursor: 0 }];
         let redoStack = [];
         let lastValue = editor.value;
         let isUndoRedo = false;
@@ -1366,7 +1451,10 @@
 
           // Save to undo stack if not from undo/redo
           if (!isUndoRedo && editor.value !== lastValue) {
-            undoStack.push(editor.value);
+            undoStack.push({
+              value: editor.value,
+              cursor: editor.selectionStart
+            });
             if (undoStack.length > 100) undoStack.shift(); // Limit stack size
             redoStack = []; // Clear redo stack on new input
             lastValue = editor.value;
@@ -1383,11 +1471,13 @@
             e.preventDefault();
             if (undoStack.length > 1) {
               redoStack.push(undoStack.pop());
-              const prevValue = undoStack[undoStack.length - 1];
+              const prevState = undoStack[undoStack.length - 1];
               isUndoRedo = true;
-              editor.value = prevValue;
-              lastValue = prevValue;
+              editor.value = prevState.value;
+              lastValue = prevState.value;
               updateEditor();
+              // Restore cursor position
+              editor.setSelectionRange(prevState.cursor, prevState.cursor);
               setMessage('Undo', 'ok');
             }
             return;
@@ -1397,12 +1487,14 @@
           if (e.ctrlKey && !e.altKey && ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || e.key === 'y')) {
             e.preventDefault();
             if (redoStack.length > 0) {
-              const nextValue = redoStack.pop();
-              undoStack.push(nextValue);
+              const nextState = redoStack.pop();
+              undoStack.push(nextState);
               isUndoRedo = true;
-              editor.value = nextValue;
-              lastValue = nextValue;
+              editor.value = nextState.value;
+              lastValue = nextState.value;
               updateEditor();
+              // Restore cursor position
+              editor.setSelectionRange(nextState.cursor, nextState.cursor);
               setMessage('Redo', 'ok');
             }
             return;
