@@ -76,8 +76,8 @@
         cursor: pointer;
       }
       button:hover { border-color: var(--blue); }
-      button.primary { background: #3a7dbf; border-color: #4a8dd0; color: #ffffff; font-weight: 600; text-shadow: 0 0 1px rgba(0,0,0,0.2); }
-      button.primary:hover { background: var(--blue); border-color: var(--blue); }
+      button.primary { background: transparent; border-color: var(--blue); color: var(--blue); font-weight: 600; }
+      button.primary:hover { background: var(--active); border-color: var(--blue); }
       button.danger { color: var(--red); }
 
       .app {
@@ -1175,6 +1175,12 @@
         const lineNumbersEl = $('editor-line-numbers');
         const highlightEl = $('editor-highlight');
 
+        // Undo/Redo stack
+        let undoStack = [editor.value];
+        let redoStack = [];
+        let lastValue = editor.value;
+        let isUndoRedo = false;
+
         // Update line numbers and highlight on content change
         const updateEditor = () => {
           const content = editor.value;
@@ -1227,7 +1233,18 @@
           }
         });
 
-        editor.addEventListener('input', updateEditor);
+        editor.addEventListener('input', () => {
+          updateEditor();
+
+          // Save to undo stack if not from undo/redo
+          if (!isUndoRedo && editor.value !== lastValue) {
+            undoStack.push(editor.value);
+            if (undoStack.length > 100) undoStack.shift(); // Limit stack size
+            redoStack = []; // Clear redo stack on new input
+            lastValue = editor.value;
+          }
+          isUndoRedo = false;
+        });
 
         // Column selection state
         let columnSelectStart = null;
@@ -1235,15 +1252,31 @@
         editor.addEventListener('keydown', (e) => {
           // Ctrl+Z for undo - handle first to prevent conflicts
           if (e.ctrlKey && !e.altKey && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
-            // Let browser handle undo, but show message
-            setTimeout(() => setMessage('Undo', 'ok'), 50);
+            e.preventDefault();
+            if (undoStack.length > 1) {
+              redoStack.push(undoStack.pop());
+              const prevValue = undoStack[undoStack.length - 1];
+              isUndoRedo = true;
+              editor.value = prevValue;
+              lastValue = prevValue;
+              updateEditor();
+              setMessage('Undo', 'ok');
+            }
             return;
           }
 
           // Ctrl+Shift+Z or Ctrl+Y for redo - handle early
           if (e.ctrlKey && !e.altKey && ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || e.key === 'y')) {
-            // Let browser handle redo, but show message
-            setTimeout(() => setMessage('Redo', 'ok'), 50);
+            e.preventDefault();
+            if (redoStack.length > 0) {
+              const nextValue = redoStack.pop();
+              undoStack.push(nextValue);
+              isUndoRedo = true;
+              editor.value = nextValue;
+              lastValue = nextValue;
+              updateEditor();
+              setMessage('Redo', 'ok');
+            }
             return;
           }
 
