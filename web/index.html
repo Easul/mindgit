@@ -113,7 +113,7 @@
 
       main {
         display: grid;
-        grid-template-columns: 300px minmax(0, 1fr) 320px;
+        grid-template-columns: 240px minmax(0, 1fr) 260px;
         overflow: hidden;
       }
       aside, section, .review {
@@ -205,12 +205,51 @@
         border-bottom: 1px solid var(--line);
         background: var(--panel);
       }
+      .file-tabs {
+        display: flex;
+        gap: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        flex: 1;
+        min-width: 0;
+        padding: 4px 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-2);
+      }
+      .file-tab {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border: 1px solid transparent;
+        border-bottom: 0;
+        border-radius: 6px 6px 0 0;
+        background: transparent;
+        color: var(--muted);
+        font-size: 13px;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: all 0.1s;
+      }
+      .file-tab:hover { background: var(--button); color: var(--text); }
+      .file-tab.active { background: var(--surface); border-color: var(--line); color: var(--text); }
+      .file-tab-close {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 3px;
+        opacity: 0.6;
+        transition: opacity 0.1s, background 0.1s;
+      }
+      .file-tab-close:hover { opacity: 1; background: var(--line); }
       .current-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
       .tabs { display: flex; gap: 6px; margin-left: auto; }
       .tabs button.active { border-color: var(--blue); color: var(--blue); }
       pre, textarea.editor {
         width: 100%;
-        height: calc(100vh - 53px - 48px - 36px);
+        height: calc(100vh - 53px - 48px - 36px - 40px);
         margin: 0;
         padding: 16px;
         border: 0;
@@ -243,7 +282,7 @@
         word-wrap: normal;
         overflow: auto;
       }
-      .editor-wrapper { position: relative; height: calc(100vh - 53px - 48px - 36px); overflow: hidden; background: var(--surface); }
+      .editor-wrapper { position: relative; height: calc(100vh - 53px - 48px - 36px - 40px); overflow: hidden; background: var(--surface); }
       .editor-line-numbers {
         position: absolute;
         left: 0;
@@ -309,12 +348,12 @@
       .empty {
         display: grid;
         place-items: center;
-        height: calc(100vh - 53px - 48px - 36px);
+        height: calc(100vh - 53px - 48px - 36px - 40px);
         color: var(--muted);
       }
       .image-viewer {
         width: 100%;
-        height: calc(100vh - 53px - 48px - 36px);
+        height: calc(100vh - 53px - 48px - 36px - 40px);
         overflow: hidden;
         background: var(--surface);
         position: relative;
@@ -532,6 +571,7 @@
         </aside>
 
         <section>
+          <div class="file-tabs" id="file-tabs"></div>
           <div class="content-head">
             <div class="current-path" id="current-path">Select a changed file</div>
             <div class="tabs">
@@ -579,6 +619,7 @@
         commitFiles: [],
         selectedCommitFile: null,
         wordWrap: localStorage.getItem('mindgit-wordwrap') === 'true',
+        openTabs: [],
       };
       const $ = (id) => document.getElementById(id);
 
@@ -617,6 +658,7 @@
         state.selected = null;
         state.selectedCommitFile = null;
         state.mode = 'diff';
+        state.openTabs = [];
         await refresh();
       }
 
@@ -634,6 +676,7 @@
           state.status = await api('/api/status');
           await refreshLoadedGroups();
           renderStatus();
+          renderFileTabs();
           if (state.selected) {
             await renderSelected();
           } else {
@@ -834,11 +877,80 @@
         renderHistory();
       }
 
+      function renderFileTabs() {
+        const tabsContainer = $('file-tabs');
+        if (!tabsContainer) return;
+
+        if (state.openTabs.length === 0) {
+          tabsContainer.innerHTML = '';
+          tabsContainer.style.display = 'none';
+          return;
+        }
+
+        tabsContainer.style.display = 'flex';
+        tabsContainer.innerHTML = state.openTabs.map(path => {
+          const fileName = path.includes('/') ? path.split('/').pop() : path;
+          const isActive = path === state.selected;
+          return `
+            <button class="file-tab ${isActive ? 'active' : ''}" data-tab-path="${escapeAttr(path)}" title="${escapeHTML(path)}">
+              <span>${escapeHTML(fileName)}</span>
+              <span class="file-tab-close" data-close-tab="${escapeAttr(path)}">×</span>
+            </button>`;
+        }).join('');
+
+        // Add event listeners
+        document.querySelectorAll('[data-tab-path]').forEach(tab => {
+          tab.addEventListener('click', (e) => {
+            if (!e.target.closest('.file-tab-close')) {
+              selectFile(tab.dataset.tabPath);
+            }
+          });
+        });
+
+        document.querySelectorAll('[data-close-tab]').forEach(closeBtn => {
+          closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeTab(closeBtn.dataset.closeTab);
+          });
+        });
+      }
+
+      function closeTab(path) {
+        const index = state.openTabs.indexOf(path);
+        if (index === -1) return;
+
+        state.openTabs.splice(index, 1);
+
+        // If closing active tab, switch to another tab
+        if (path === state.selected) {
+          if (state.openTabs.length > 0) {
+            // Switch to previous tab, or next if it was the first
+            const newIndex = index > 0 ? index - 1 : 0;
+            selectFile(state.openTabs[newIndex]);
+          } else {
+            // No tabs left, clear selection
+            state.selected = null;
+            state.mode = 'full';
+            $('viewer').innerHTML = '<div class="empty">No file selected</div>';
+            $('current-path').textContent = 'Select a changed file';
+            renderFileTabs();
+          }
+        } else {
+          renderFileTabs();
+        }
+      }
+
       async function selectFile(path) {
+        // Add to tabs if not already open
+        if (!state.openTabs.includes(path)) {
+          state.openTabs.push(path);
+        }
+
         state.selected = path;
         state.mode = 'full';
         state.expandedGroups.add(groupForPath(path));
         renderStatus();
+        renderFileTabs();
         await renderSelected();
       }
 
