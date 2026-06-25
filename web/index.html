@@ -26,7 +26,7 @@
         <button id="refresh" type="button">Refresh</button>
         <div class="grow"></div>
         <form class="search" id="search-form">
-          <input id="search" placeholder="Search with rg" autocomplete="off" />
+          <input id="search" placeholder="Search with keyword" autocomplete="off" />
           <button type="submit">Search</button>
         </form>
       </header>
@@ -39,21 +39,24 @@
         <div class="layout-resizer layout-resizer-vertical" id="left-pane-resizer" aria-hidden="true"></div>
 
         <section>
-          <div class="file-tabs" id="file-tabs"></div>
-          <div class="content-head">
-            <div class="current-path" id="current-path">Select a changed file</div>
-            <div class="tabs">
-              <button id="diff-tab" class="active" type="button">Diff</button>
-              <button id="full-tab" type="button">Full</button>
-              <button id="edit-tab" type="button">Edit</button>
-              <button id="save-tab" class="primary" type="button" hidden>Save</button>
-              <button id="mobile-viewer-toggle" class="mobile-viewer-toggle" type="button" hidden>收起</button>
-              <button id="split-right-tab" class="desktop-split-toggle" type="button" hidden>右拆</button>
-              <button id="split-down-tab" class="desktop-split-toggle" type="button" hidden>下拆</button>
-            </div>
-          </div>
           <div class="viewer-split-area" id="viewer-split-area">
-            <div id="viewer"><div class="empty">No file selected</div></div>
+            <div class="editor-pane primary-editor-pane">
+              <div class="file-tabs" id="file-tabs"></div>
+              <div class="content-head">
+                <div class="current-path" id="current-path">Select a changed file</div>
+                <div class="tabs">
+                  <button id="diff-tab" class="active" type="button">Diff</button>
+                  <button id="full-tab" type="button">Full</button>
+                  <button id="edit-tab" type="button">Edit</button>
+                  <button id="save-tab" class="primary" type="button" hidden>Save</button>
+                  <button id="mobile-viewer-toggle" class="mobile-viewer-toggle" type="button" hidden>收起</button>
+                  <button id="split-right-tab" class="desktop-split-toggle" type="button" hidden>右拆</button>
+                  <button id="split-down-tab" class="desktop-split-toggle" type="button" hidden>下拆</button>
+                  <button id="embed-close-tab" class="embed-close-toggle" type="button">关闭</button>
+                </div>
+              </div>
+              <div id="viewer"><div class="empty">No file selected</div></div>
+            </div>
             <div class="split-pane-resizer" id="split-pane-resizer" hidden aria-hidden="true"></div>
             <div class="split-pane-host" id="split-pane-host" hidden></div>
           </div>
@@ -69,7 +72,7 @@
             </div>
             <div class="card">
               <h3>Search Results</h3>
-              <div class="search-results" id="search-results"><p>输入关键词后使用 rg 搜索。</p></div>
+              <div class="search-results" id="search-results"><p>输入关键词后全局搜索。</p></div>
             </div>
           </div>
         </div>

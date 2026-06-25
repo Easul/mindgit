@@ -12,8 +12,9 @@ const state = {
   splitPane: {
     open: false,
     orientation: 'right',
-    path: '',
-    mode: 'edit',
+    tabs: [],
+    selectedPath: '',
+    mode: 'full',
   },
   content: '',
   theme: localStorage.getItem('mindgit-theme') || 'dark',
@@ -31,6 +32,94 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 const layoutStorageKey = 'mindgit-layout-v1';
+const workspaceStorageKey = 'mindgit-workspace-v1';
+
+function normalizeMode(mode) {
+  return ['diff', 'full', 'edit'].includes(mode) ? mode : 'full';
+}
+
+function uniquePaths(paths) {
+  if (!Array.isArray(paths)) return [];
+  return [...new Set(paths.filter((path) => typeof path === 'string' && path.trim()))];
+}
+
+function loadWorkspaceState() {
+  if (state.embed) return null;
+  try {
+    const raw = localStorage.getItem(workspaceStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const splitPane = parsed.splitPane || {};
+    const selectedPath = typeof splitPane.selectedPath === 'string'
+      ? splitPane.selectedPath
+      : typeof splitPane.path === 'string'
+        ? splitPane.path
+        : '';
+    const splitTabs = uniquePaths([...(splitPane.tabs || []), selectedPath]);
+    const openTabs = uniquePaths([...(parsed.openTabs || []), parsed.selected]);
+    return {
+      selected: typeof parsed.selected === 'string' ? parsed.selected : null,
+      mode: normalizeMode(parsed.mode),
+      mobileViewerExpanded: Boolean(parsed.mobileViewerExpanded),
+      openTabs,
+      tabStates: parsed.tabStates && typeof parsed.tabStates === 'object' ? parsed.tabStates : {},
+      splitPane: {
+        open: Boolean(splitPane.open && selectedPath),
+        orientation: splitPane.orientation === 'down' ? 'down' : 'right',
+        tabs: splitTabs,
+        selectedPath,
+        mode: normalizeMode(splitPane.mode),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function applyWorkspaceState() {
+  const saved = loadWorkspaceState();
+  if (!saved) return;
+  state.selected = saved.selected;
+  state.mode = saved.mode;
+  state.mobileViewerExpanded = saved.mobileViewerExpanded;
+  state.openTabs = saved.openTabs;
+  state.tabStates = saved.tabStates;
+  state.splitPane = saved.splitPane;
+}
+
+function saveWorkspaceState() {
+  if (state.embed) return;
+  localStorage.setItem(workspaceStorageKey, JSON.stringify({
+    selected: state.selected,
+    mode: state.mode,
+    mobileViewerExpanded: state.mobileViewerExpanded,
+    openTabs: state.openTabs,
+    tabStates: state.tabStates,
+    splitPane: state.splitPane,
+  }));
+}
+
+function notifyEmbedState() {
+  if (!state.embed || !window.parent) return;
+  window.parent.postMessage({
+    type: 'mindgit:split-state',
+    payload: {
+      selectedPath: state.selected,
+      mode: state.mode,
+      tabs: state.openTabs,
+    },
+  }, window.location.origin);
+}
+
+function parseInitialTabs() {
+  try {
+    return uniquePaths(JSON.parse(new URLSearchParams(window.location.search).get('tabs') || '[]'));
+  } catch {
+    return [];
+  }
+}
+
+applyWorkspaceState();
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -123,7 +212,12 @@ async function setView(view) {
   state.mode = 'diff';
   state.mobileViewerExpanded = false;
   state.openTabs = [];
+  state.splitPane.open = false;
+  state.splitPane.selectedPath = '';
+  state.splitPane.tabs = [];
   syncLayoutState();
+  renderSplitPane();
+  saveWorkspaceState();
   await refresh();
 }
 
@@ -136,6 +230,7 @@ async function refresh() {
     if (state.view === 'history') {
       await loadHistory();
       renderHistory();
+      renderSplitPane();
       setMessage('Updated', 'ok');
       return;
     }
@@ -148,6 +243,7 @@ async function refresh() {
     } else {
       $('viewer').innerHTML = `<div class="empty">${state.status.files.length ? 'Expand a directory and select a changed file' : 'Working tree clean'}</div>`;
     }
+    renderSplitPane();
     setMessage('Updated', 'ok');
   } catch (error) {
     setMessage(error.message, 'error');
@@ -200,14 +296,17 @@ async function setMode(mode) {
   syncLayoutState();
   await renderSelected();
   restoreTabState(state.selected);
+  saveWorkspaceState();
+  notifyEmbedState();
 }
 
-function splitSrc(path, mode, orientation) {
+function splitSrc(pane) {
   const params = new URLSearchParams({
     embed: '1',
-    path,
-    mode,
-    split: orientation,
+    path: pane.selectedPath,
+    mode: pane.mode,
+    split: pane.orientation,
+    tabs: JSON.stringify(pane.tabs),
     ts: String(Date.now()),
   });
   return `/?${params.toString()}`;
@@ -223,7 +322,7 @@ function renderSplitPane() {
   area.classList.toggle('split-right', state.splitPane.open && state.splitPane.orientation === 'right');
   area.classList.toggle('split-down', state.splitPane.open && state.splitPane.orientation === 'down');
 
-  if (!state.splitPane.open || !state.splitPane.path) {
+  if (!state.splitPane.open || !state.splitPane.selectedPath) {
     host.hidden = true;
     if (resizer) resizer.hidden = true;
     host.innerHTML = '';
@@ -234,38 +333,53 @@ function renderSplitPane() {
   if (resizer) resizer.hidden = false;
   host.innerHTML = `
     <div class="split-pane-frame">
-      <div class="split-pane-bar">
-        <span class="split-pane-title">${escapeHTML(state.splitPane.path)}</span>
-        <button id="split-pane-close" type="button">关闭</button>
-      </div>
       <iframe
         class="split-pane-iframe"
         id="split-pane-iframe"
         title="Split Pane"
-        src="${escapeAttr(splitSrc(state.splitPane.path, state.splitPane.mode, state.splitPane.orientation))}">
+        src="${escapeAttr(splitSrc(state.splitPane))}">
       </iframe>
     </div>`;
-
-  const closeButton = $('split-pane-close');
-  if (closeButton) {
-    closeButton.addEventListener('click', closeSplitPane);
-  }
 }
 
 function openSplitPane(orientation) {
   if (!state.selected || state.embed) return;
+  const paneMode = normalizeMode(state.mode);
+  const shouldAppend = state.splitPane.open && state.splitPane.orientation === orientation;
   state.splitPane.open = true;
   state.splitPane.orientation = orientation;
-  state.splitPane.path = state.selected;
-  state.splitPane.mode = state.mode === 'diff' ? 'diff' : state.mode === 'edit' ? 'edit' : 'full';
+  state.splitPane.tabs = shouldAppend ? uniquePaths([...state.splitPane.tabs, state.selected]) : [state.selected];
+  state.splitPane.selectedPath = state.selected;
+  state.splitPane.mode = paneMode;
   syncLayoutState();
   renderSplitPane();
+  saveWorkspaceState();
 }
 
 function closeSplitPane() {
   state.splitPane.open = false;
+  state.splitPane.selectedPath = '';
+  state.splitPane.tabs = [];
   syncLayoutState();
   renderSplitPane();
+  saveWorkspaceState();
+}
+
+function handleSplitPaneMessage(event) {
+  if (state.embed || event.origin !== window.location.origin) return;
+  const data = event.data || {};
+  if (data.type === 'mindgit:close-split') {
+    closeSplitPane();
+    return;
+  }
+  if (data.type !== 'mindgit:split-state' || !state.splitPane.open) return;
+  const payload = data.payload || {};
+  state.splitPane.tabs = uniquePaths(payload.tabs);
+  state.splitPane.selectedPath = typeof payload.selectedPath === 'string'
+    ? payload.selectedPath
+    : state.splitPane.tabs[0] || '';
+  state.splitPane.mode = normalizeMode(payload.mode);
+  saveWorkspaceState();
 }
 
 function setupResizer(id, onPointerDown) {
@@ -364,22 +478,32 @@ if ($('save-tab')) $('save-tab').addEventListener('click', async () => {
 if ($('mobile-viewer-toggle')) $('mobile-viewer-toggle').addEventListener('click', () => {
   state.mobileViewerExpanded = !state.mobileViewerExpanded;
   syncLayoutState();
+  saveWorkspaceState();
 });
 if ($('split-right-tab')) $('split-right-tab').addEventListener('click', () => openSplitPane('right'));
 if ($('split-down-tab')) $('split-down-tab').addEventListener('click', () => openSplitPane('down'));
+if ($('embed-close-tab')) $('embed-close-tab').addEventListener('click', () => {
+  if (!state.embed || !window.parent) return;
+  window.parent.postMessage({ type: 'mindgit:close-split' }, window.location.origin);
+});
 if ($('file-list')) $('file-list').addEventListener('click', handleTreeClick);
 if ($('search-form')) $('search-form').addEventListener('submit', (event) => {
   event.preventDefault();
   search();
 });
+window.addEventListener('message', handleSplitPaneMessage);
 setupDesktopResizers();
 
 async function bootstrap() {
   await refresh();
-  if (state.embed && state.initialPath && state.status?.files?.some((file) => file.path === state.initialPath)) {
-    await selectFile(state.initialPath);
-    if (state.initialMode && state.initialMode !== state.mode) {
-      await setMode(state.initialMode);
+  if (state.embed) {
+    const initialTabs = parseInitialTabs();
+    const initialPath = state.initialPath || initialTabs[0] || '';
+    if (initialTabs.length) {
+      state.openTabs = initialTabs;
+    }
+    if (initialPath) {
+      await selectFile(initialPath, { mode: normalizeMode(state.initialMode), restoreState: false });
     }
   }
   renderSplitPane();

@@ -141,9 +141,13 @@ function closeTab(path) {
       $('viewer').innerHTML = '<div class="empty">No file selected</div>';
       $('current-path').textContent = 'Select a changed file';
       renderFileTabs();
+      saveWorkspaceState();
+      notifyEmbedState();
     }
   } else {
     renderFileTabs();
+    saveWorkspaceState();
+    notifyEmbedState();
   }
 }
 
@@ -259,6 +263,8 @@ async function selectFile(path, options = {}) {
   if (options.restoreState !== false) {
     restoreTabState(path);
   }
+  saveWorkspaceState();
+  notifyEmbedState();
 }
 
 function groupForPath(path) {
