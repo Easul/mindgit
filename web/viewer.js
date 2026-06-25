@@ -14,8 +14,16 @@ async function renderSelected() {
 
   const isBinary = isLikelyBinary(state.selected);
   const isImage = isImageFile(state.selected);
+  const isStructured = isStructuredFile(state.selected);
 
   if (state.mode === 'edit') {
+    if (isStructured) {
+      state.editorReady = false;
+      updateEditButton('Loading...', { disabled: true, primary: true });
+      await renderStructuredEdit(state.selected);
+      return;
+    }
+
     if (isBinary) {
       state.editorReady = false;
       $('viewer').innerHTML = `<div class="binary-notice"><div><strong>Cannot Edit Binary File</strong><p>This file type cannot be edited in the browser.</p></div></div>`;
@@ -58,7 +66,9 @@ async function renderSelected() {
   state.editorReady = false;
   updateEditButton('Edit');
   if (state.mode === 'full') {
-    if (isImage) {
+    if (isStructured) {
+      await renderStructuredFull(state.selected);
+    } else if (isImage) {
       renderImageViewer(state.selected);
     } else if (isBinary) {
       $('viewer').innerHTML = `<div class="binary-notice"><div><strong>Binary File</strong><p>This file cannot be displayed as text.</p></div></div>`;
@@ -81,7 +91,7 @@ function isLikelyBinary(path) {
   const ext = path.split('.').pop().toLowerCase();
   const binaryExts = [
     'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'ico', 'svg',
-    'zip', 'tar', 'gz', 'rar', '7z', 'bz2', 'xz',
+    'zip', 'tar', 'gz', 'rar', '7z', 'bz2', 'xz', 'xmind',
     'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
     'exe', 'dll', 'so', 'dylib', 'bin',
     'wasm', 'pyc', 'class', 'jar',
@@ -234,7 +244,8 @@ async function saveFile() {
     setMessage('Saving...');
     updateEditButton('Saving...', { disabled: true, primary: true });
     const editor = $('editor');
-    const content = editor ? editor.value : state.content;
+    const structuredContent = structuredEditorContent();
+    const content = structuredContent !== null ? structuredContent : editor ? editor.value : state.content;
     const cursorStart = editor ? editor.selectionStart : 0;
     const cursorEnd = editor ? editor.selectionEnd : 0;
 

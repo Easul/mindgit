@@ -112,6 +112,16 @@ function notifyEmbedState() {
   }, window.location.origin);
 }
 
+function notifySplitTheme() {
+  if (state.embed || !state.splitPane.open) return;
+  const target = splitIframeWindow();
+  if (!target) return;
+  target.postMessage({
+    type: 'mindgit:theme',
+    payload: { theme: state.theme },
+  }, window.location.origin);
+}
+
 function splitIframeWindow() {
   return $('split-pane-iframe')?.contentWindow || null;
 }
@@ -271,16 +281,17 @@ async function api(path, options) {
 
 async function setView(view) {
   if (state.view === view) return;
+  if (state.view === 'worktree') {
+    saveCurrentTabState();
+  }
   state.view = view;
-  state.selected = null;
-  state.selectedCommitFile = null;
-  state.mode = 'diff';
+  if (view === 'history') {
+    state.selectedCommitFile = null;
+    $('viewer').innerHTML = '<div class="empty">No file selected</div>';
+  }
   state.mobileViewerExpanded = false;
-  state.openTabs = [];
-  state.splitPane.open = false;
-  state.splitPane.selectedPath = '';
-  state.splitPane.tabs = [];
   syncLayoutState();
+  renderFileTabs();
   renderSplitPane();
   saveWorkspaceState();
   await refresh();
@@ -361,7 +372,7 @@ function toggleTheme() {
   applyTheme(state.theme === 'dark' ? 'light' : 'dark');
 }
 
-function applyTheme(theme) {
+function applyTheme(theme, options = {}) {
   state.theme = theme;
   document.documentElement.dataset.theme = theme;
   localStorage.setItem('mindgit-theme', theme);
@@ -374,6 +385,9 @@ function applyTheme(theme) {
   } else {
     if (darkStyle) darkStyle.disabled = true;
     if (lightStyle) lightStyle.disabled = false;
+  }
+  if (options.notifySplit !== false) {
+    notifySplitTheme();
   }
 }
 
@@ -412,11 +426,12 @@ function renderSplitPane() {
   const resizer = $('split-pane-resizer');
   if (!host || !area) return;
 
-  area.classList.toggle('split-open', state.splitPane.open);
+  const splitVisible = state.view === 'worktree' && state.splitPane.open;
+  area.classList.toggle('split-open', splitVisible);
   area.classList.toggle('split-right', state.splitPane.open && state.splitPane.orientation === 'right');
   area.classList.toggle('split-down', state.splitPane.open && state.splitPane.orientation === 'down');
 
-  if (!state.splitPane.open || !state.splitPane.selectedPath) {
+  if (!splitVisible || !state.splitPane.selectedPath) {
     host.hidden = true;
     if (resizer) resizer.hidden = true;
     host.innerHTML = '';
@@ -441,6 +456,7 @@ function renderSplitPane() {
     if (content !== null) {
       broadcastEditorContent(state.splitPane.selectedPath, content);
     }
+    notifySplitTheme();
   });
 }
 
@@ -468,6 +484,7 @@ function closeSplitPane() {
 }
 
 function handleSplitPaneMessage(event) {
+  if (handleThemeMessage(event)) return;
   if (handleFileContentMessage(event)) return;
   if (state.embed || event.origin !== window.location.origin) return;
   const data = event.data || {};
@@ -487,6 +504,17 @@ function handleSplitPaneMessage(event) {
   }
   state.splitPane.mode = normalizeMode(payload.mode);
   saveWorkspaceState();
+}
+
+function handleThemeMessage(event) {
+  if (event.origin !== window.location.origin) return false;
+  const data = event.data || {};
+  if (data.type !== 'mindgit:theme') return false;
+  const theme = data.payload?.theme;
+  if (theme === 'dark' || theme === 'light') {
+    applyTheme(theme, { notifySplit: false });
+  }
+  return true;
 }
 
 function setupResizer(id, onPointerDown) {

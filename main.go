@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"embed"
 	"encoding/json"
@@ -61,6 +62,11 @@ type DiffResponse struct {
 type FileResponse struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
+}
+
+type XMindResponse struct {
+	Path    string `json:"path"`
+	Content any    `json:"content"`
 }
 
 type SaveRequest struct {
@@ -127,6 +133,7 @@ func main() {
 	mux.HandleFunc("GET /api/status", app.handleStatus)
 	mux.HandleFunc("GET /api/diff", app.handleDiff)
 	mux.HandleFunc("GET /api/file", app.handleReadFile)
+	mux.HandleFunc("GET /api/xmind", app.handleXMindFile)
 	mux.HandleFunc("POST /api/file", app.handleSaveFile)
 	mux.HandleFunc("POST /api/fs", app.handleCreatePath)
 	mux.HandleFunc("DELETE /api/fs", app.handleDeletePath)
@@ -271,6 +278,52 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 
 	// For text files, return JSON
 	writeJSON(w, FileResponse{Path: path, Content: string(content)}, nil)
+}
+
+func (a App) handleXMindFile(w http.ResponseWriter, r *http.Request) {
+	path, err := a.cleanPath(r.URL.Query().Get("path"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if strings.ToLower(filepath.Ext(path)) != ".xmind" {
+		writeJSON(w, nil, errors.New("file is not an xmind file"))
+		return
+	}
+
+	content, err := os.ReadFile(filepath.Join(a.root, path))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	for _, file := range reader.File {
+		if file.Name != "content.json" {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		defer rc.Close()
+
+		var parsed any
+		if err := json.NewDecoder(rc).Decode(&parsed); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		writeJSON(w, XMindResponse{Path: path, Content: parsed}, nil)
+		return
+	}
+
+	writeJSON(w, nil, errors.New("xmind content.json not found"))
 }
 
 func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {

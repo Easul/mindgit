@@ -846,6 +846,193 @@
         margin-bottom: 8px;
       }
 
+      .structured-editor {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+        background: var(--surface);
+      }
+      .structured-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+        min-height: 38px;
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .structured-toolbar strong {
+        color: var(--text);
+        font-size: 13px;
+      }
+      .structured-toolbar button {
+        padding: 5px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      .drawio-workspace,
+      .mxgraph-canvas,
+      .mindmap-canvas,
+      .xmind-sheets {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+      }
+      .mxgraph-canvas,
+      .drawio-workspace {
+        position: relative;
+        background:
+          linear-gradient(var(--line) 1px, transparent 1px),
+          linear-gradient(90deg, var(--line) 1px, transparent 1px);
+        background-size: 24px 24px;
+        background-color: var(--surface);
+      }
+      .mxgraph-canvas {
+        cursor: default;
+      }
+      .mxgraph-canvas.is-middle-panning,
+      .mindmap-canvas.is-middle-panning,
+      .xmind-sheets.is-middle-panning {
+        cursor: grabbing;
+      }
+      .mxgraph-canvas svg {
+        overflow: visible;
+      }
+      .drawio-edges {
+        position: absolute;
+        inset: 0;
+        overflow: visible;
+        pointer-events: none;
+      }
+      .drawio-edge {
+        stroke: var(--muted);
+        stroke-width: 2;
+        fill: none;
+        marker-end: url(#drawio-arrow);
+      }
+      .drawio-edge.active {
+        stroke: var(--blue);
+      }
+      .drawio-arrow-head {
+        fill: var(--muted);
+      }
+      .drawio-node {
+        position: absolute;
+        display: grid;
+        place-items: center;
+        padding: 6px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--text);
+        text-align: center;
+        cursor: default;
+        overflow: hidden;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, .12);
+      }
+      .drawio-node span {
+        position: relative;
+        z-index: 1;
+        pointer-events: none;
+      }
+      .structured-editor.is-editable .drawio-node {
+        cursor: move;
+      }
+      .drawio-node.shape-rounded {
+        border-radius: 8px;
+      }
+      .drawio-node.shape-ellipse {
+        border-radius: 999px;
+      }
+      .drawio-node.shape-diamond {
+        clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+        padding: 14px;
+      }
+      .drawio-node.active,
+      .mind-node.active {
+        border-color: var(--blue);
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.24);
+      }
+      .mindmap-canvas,
+      .xmind-sheets {
+        padding: 28px;
+        transform-origin: 0 0;
+      }
+      .mindmap-canvas > .mind-node-branch {
+        transform: scale(var(--mind-zoom, 1));
+        transform-origin: 0 0;
+      }
+      .xmind-sheets > .xmind-sheet {
+        transform: scale(var(--mind-zoom, 1));
+        transform-origin: 0 0;
+      }
+      .mind-node-branch {
+        display: flex;
+        align-items: center;
+        gap: 34px;
+        margin: 10px 0;
+        position: relative;
+      }
+      .mind-node-children {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding-left: 34px;
+        border-left: 2px solid rgba(59, 130, 246, .38);
+        position: relative;
+      }
+      .mind-node-branch > .mind-node + .mind-node-children::before,
+      .mind-node-children > .mind-node-branch::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: -34px;
+        width: 34px;
+        border-top: 2px solid rgba(59, 130, 246, .38);
+      }
+      .mind-node-branch > .mind-node + .mind-node-children::before {
+        border-top-left-radius: 10px;
+      }
+      .mind-node {
+        flex: 0 0 auto;
+        max-width: 260px;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      button.mind-node {
+        cursor: pointer;
+      }
+      .xmind-sheet {
+        min-width: max-content;
+        margin-bottom: 24px;
+      }
+      .xmind-sheet h3 {
+        margin: 0 0 12px;
+        color: var(--text);
+      }
+      .structured-source {
+        flex: 1 1 auto;
+        min-height: 0;
+        width: 100%;
+        border: 0;
+        border-radius: 0;
+        resize: none;
+        background: var(--surface);
+        color: var(--text);
+        padding: 16px;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
       .review-body { padding: 14px; height: calc(100vh - 53px - 48px); }
       .card {
         border: 1px solid var(--line);

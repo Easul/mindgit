@@ -15,6 +15,7 @@ async function loadHistory() {
 
 function renderHistory() {
   syncLayoutState();
+  renderFileTabs();
   $('root').textContent = state.status ? state.status.root : '-';
   $('branch').textContent = state.status ? state.status.branch : '-';
   $('modified').textContent = '0';
@@ -31,7 +32,7 @@ function renderHistory() {
     ? `${state.selectedCommit.shortHash}: ${state.selectedCommit.subject}`
     : '选择提交后，这里会显示提交摘要。';
   if (!state.selectedCommitFile) {
-    $('viewer').innerHTML = `<div class="empty">${state.selectedCommit ? 'Select a file from this commit' : 'No commit selected'}</div>`;
+    $('viewer').innerHTML = '<div class="empty">No file selected</div>';
   }
 }
 

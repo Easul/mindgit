@@ -100,7 +100,7 @@ function renderFileTabs() {
   const tabsContainer = $('file-tabs');
   if (!tabsContainer) return;
 
-  if (state.openTabs.length === 0) {
+  if (state.view !== 'worktree' || state.openTabs.length === 0) {
     tabsContainer.innerHTML = '';
     tabsContainer.style.display = 'none';
     return;
