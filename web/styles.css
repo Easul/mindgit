@@ -874,7 +874,6 @@
         border-radius: 4px;
         font-size: 12px;
       }
-      .drawio-workspace,
       .mxgraph-canvas,
       .mindmap-canvas,
       .xmind-sheets {
@@ -882,8 +881,7 @@
         min-height: 0;
         overflow: auto;
       }
-      .mxgraph-canvas,
-      .drawio-workspace {
+      .mxgraph-canvas {
         position: relative;
         background:
           linear-gradient(var(--line) 1px, transparent 1px),
@@ -902,57 +900,6 @@
       .mxgraph-canvas svg {
         overflow: visible;
       }
-      .drawio-edges {
-        position: absolute;
-        inset: 0;
-        overflow: visible;
-        pointer-events: none;
-      }
-      .drawio-edge {
-        stroke: var(--muted);
-        stroke-width: 2;
-        fill: none;
-        marker-end: url(#drawio-arrow);
-      }
-      .drawio-edge.active {
-        stroke: var(--blue);
-      }
-      .drawio-arrow-head {
-        fill: var(--muted);
-      }
-      .drawio-node {
-        position: absolute;
-        display: grid;
-        place-items: center;
-        padding: 6px;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        background: var(--panel);
-        color: var(--text);
-        text-align: center;
-        cursor: default;
-        overflow: hidden;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, .12);
-      }
-      .drawio-node span {
-        position: relative;
-        z-index: 1;
-        pointer-events: none;
-      }
-      .structured-editor.is-editable .drawio-node {
-        cursor: move;
-      }
-      .drawio-node.shape-rounded {
-        border-radius: 8px;
-      }
-      .drawio-node.shape-ellipse {
-        border-radius: 999px;
-      }
-      .drawio-node.shape-diamond {
-        clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-        padding: 14px;
-      }
-      .drawio-node.active,
       .mind-node.active {
         border-color: var(--blue);
         box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.24);
