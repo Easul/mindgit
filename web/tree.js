@@ -236,7 +236,7 @@ function restoreTabState(path) {
   }, 100);
 }
 
-async function selectFile(path) {
+async function selectFile(path, options = {}) {
   saveCurrentTabState();
 
   if (!state.status) {
@@ -248,7 +248,7 @@ async function selectFile(path) {
   }
 
   state.selected = path;
-  state.mode = 'full';
+  state.mode = options.mode || 'full';
   state.mobileViewerExpanded = true;
   state.editorReady = false;
   state.expandedGroups.add(groupForPath(path));
@@ -256,7 +256,9 @@ async function selectFile(path) {
   renderStatus();
   renderFileTabs();
   await renderSelected();
-  restoreTabState(path);
+  if (options.restoreState !== false) {
+    restoreTabState(path);
+  }
 }
 
 function groupForPath(path) {
