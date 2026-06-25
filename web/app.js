@@ -179,19 +179,8 @@ function syncLayoutState() {
   document.documentElement.dataset.splitOpen = state.splitPane.open ? 'true' : 'false';
   document.documentElement.dataset.splitOrientation = state.splitPane.orientation;
 
-  const mobileToggle = $('mobile-viewer-toggle');
-  if (mobileToggle) {
-    const visible = !state.embed && state.view === 'worktree' && Boolean(state.selected);
-    mobileToggle.hidden = !visible;
-    mobileToggle.textContent = state.mobileViewerExpanded ? '收起' : '展开';
-    mobileToggle.setAttribute('aria-pressed', state.mobileViewerExpanded ? 'true' : 'false');
-  }
-
-  const desktopControlsVisible = !state.embed && state.view === 'worktree' && Boolean(state.selected);
-  const splitRightButton = $('split-right-tab');
-  const splitDownButton = $('split-down-tab');
-  if (splitRightButton) splitRightButton.hidden = !desktopControlsVisible;
-  if (splitDownButton) splitDownButton.hidden = !desktopControlsVisible;
+  const rootMenuButton = $('tree-root-menu');
+  if (rootMenuButton) rootMenuButton.hidden = state.view !== 'worktree';
 }
 
 async function api(path, options) {
@@ -288,13 +277,15 @@ function applyTheme(theme) {
 async function setMode(mode) {
   if (state.view === 'history') return;
   if (!state.selected) return;
+  saveCurrentTabState();
   if (state.mode === 'edit' && mode !== 'edit') {
     await saveFile();
   }
-  saveCurrentTabState();
   state.mode = mode;
   syncLayoutState();
+  renderFileTabs();
   await renderSelected();
+  renderFileTabs();
   restoreTabState(state.selected);
   saveWorkspaceState();
   notifyEmbedState();
@@ -342,14 +333,14 @@ function renderSplitPane() {
     </div>`;
 }
 
-function openSplitPane(orientation) {
-  if (!state.selected || state.embed) return;
-  const paneMode = normalizeMode(state.mode);
+function openSplitPane(orientation, path = state.selected) {
+  if (!path || state.embed) return;
+  const paneMode = normalizeMode(path === state.selected ? state.mode : state.tabStates[path]?.mode);
   const shouldAppend = state.splitPane.open && state.splitPane.orientation === orientation;
   state.splitPane.open = true;
   state.splitPane.orientation = orientation;
-  state.splitPane.tabs = shouldAppend ? uniquePaths([...state.splitPane.tabs, state.selected]) : [state.selected];
-  state.splitPane.selectedPath = state.selected;
+  state.splitPane.tabs = shouldAppend ? uniquePaths([...state.splitPane.tabs, path]) : [path];
+  state.splitPane.selectedPath = path;
   state.splitPane.mode = paneMode;
   syncLayoutState();
   renderSplitPane();
@@ -466,25 +457,10 @@ if ($('worktree-view')) $('worktree-view').addEventListener('click', () => setVi
 if ($('history-view')) $('history-view').addEventListener('click', () => setView('history'));
 if ($('theme-toggle')) $('theme-toggle').addEventListener('click', toggleTheme);
 if ($('refresh')) $('refresh').addEventListener('click', refresh);
-if ($('diff-tab')) $('diff-tab').addEventListener('click', () => setMode('diff'));
-if ($('full-tab')) $('full-tab').addEventListener('click', () => setMode('full'));
-if ($('edit-tab')) $('edit-tab').addEventListener('click', async () => {
-  await setMode('edit');
-});
-if ($('save-tab')) $('save-tab').addEventListener('click', async () => {
-  if (state.saveInProgress) return;
-  await saveFile();
-});
-if ($('mobile-viewer-toggle')) $('mobile-viewer-toggle').addEventListener('click', () => {
-  state.mobileViewerExpanded = !state.mobileViewerExpanded;
-  syncLayoutState();
-  saveWorkspaceState();
-});
-if ($('split-right-tab')) $('split-right-tab').addEventListener('click', () => openSplitPane('right'));
-if ($('split-down-tab')) $('split-down-tab').addEventListener('click', () => openSplitPane('down'));
-if ($('embed-close-tab')) $('embed-close-tab').addEventListener('click', () => {
-  if (!state.embed || !window.parent) return;
-  window.parent.postMessage({ type: 'mindgit:close-split' }, window.location.origin);
+if ($('tree-root-menu')) $('tree-root-menu').addEventListener('click', (event) => {
+  event.stopPropagation();
+  if (state.view !== 'worktree') return;
+  openTreeMenu(event.currentTarget, '', 'dir');
 });
 if ($('file-list')) $('file-list').addEventListener('click', handleTreeClick);
 if ($('search-form')) $('search-form').addEventListener('submit', (event) => {

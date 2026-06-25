@@ -68,6 +68,16 @@ type SaveRequest struct {
 	Content string `json:"content"`
 }
 
+type CreatePathRequest struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+type DeletePathRequest struct {
+	Path    string `json:"path"`
+	Confirm bool   `json:"confirm"`
+}
+
 type SearchResponse struct {
 	Query   string         `json:"query"`
 	Results []SearchResult `json:"results"`
@@ -118,6 +128,8 @@ func main() {
 	mux.HandleFunc("GET /api/diff", app.handleDiff)
 	mux.HandleFunc("GET /api/file", app.handleReadFile)
 	mux.HandleFunc("POST /api/file", app.handleSaveFile)
+	mux.HandleFunc("POST /api/fs", app.handleCreatePath)
+	mux.HandleFunc("DELETE /api/fs", app.handleDeletePath)
 	mux.HandleFunc("GET /api/search", app.handleSearch)
 	mux.HandleFunc("GET /api/tree", app.handleTree)
 	mux.HandleFunc("GET /api/commits", app.handleCommits)
@@ -276,6 +288,100 @@ func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {
 
 	fullPath := filepath.Join(a.root, path)
 	if err := os.WriteFile(fullPath, []byte(req.Content), 0o644); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	status, err := a.status()
+	writeJSON(w, status, err)
+}
+
+func (a App) handleCreatePath(w http.ResponseWriter, r *http.Request) {
+	var req CreatePathRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	path, err := a.cleanPath(req.Path)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if isGitPath(path) {
+		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
+
+	fullPath := filepath.Join(a.root, path)
+	if _, err := os.Stat(fullPath); err == nil {
+		writeJSON(w, nil, fmt.Errorf("path already exists: %s", path))
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	switch req.Kind {
+	case "file":
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		file, err := os.OpenFile(fullPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if err := file.Close(); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+	case "dir":
+		if err := os.MkdirAll(fullPath, 0o755); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+	default:
+		writeJSON(w, nil, errors.New("kind must be file or dir"))
+		return
+	}
+
+	status, err := a.status()
+	writeJSON(w, status, err)
+}
+
+func (a App) handleDeletePath(w http.ResponseWriter, r *http.Request) {
+	var req DeletePathRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if !req.Confirm {
+		writeJSON(w, nil, errors.New("delete confirmation is required"))
+		return
+	}
+
+	path, err := a.cleanPath(req.Path)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if isGitPath(path) {
+		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
+
+	fullPath := filepath.Join(a.root, path)
+	if _, err := os.Stat(fullPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeJSON(w, nil, fmt.Errorf("path does not exist: %s", path))
+			return
+		}
+		writeJSON(w, nil, err)
+		return
+	}
+	if err := os.RemoveAll(fullPath); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
@@ -890,6 +996,10 @@ func (a App) cleanPath(input string) (string, error) {
 		return "", errors.New("path is required")
 	}
 	return a.cleanOptionalPath(input)
+}
+
+func isGitPath(path string) bool {
+	return path == ".git" || strings.HasPrefix(path, ".git"+string(filepath.Separator)) || strings.HasPrefix(path, ".git/")
 }
 
 func (a App) cleanCommit(input string) (string, error) {

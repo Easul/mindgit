@@ -30,15 +30,7 @@ function renderHistory() {
     ? `${state.selectedCommit.shortHash}: ${state.selectedCommit.subject}`
     : '选择提交后，这里会显示提交摘要。';
   if (!state.selectedCommitFile) {
-    $('current-path').textContent = state.selectedCommit ? `${state.selectedCommit.shortHash} files` : 'Select a commit';
     $('viewer').innerHTML = `<div class="empty">${state.selectedCommit ? 'Select a file from this commit' : 'No commit selected'}</div>`;
-  }
-  $('diff-tab').classList.add('active');
-  $('full-tab').classList.remove('active');
-  $('edit-tab').classList.remove('active');
-  if ($('edit-tab').textContent === 'Save') {
-    $('edit-tab').textContent = 'Edit';
-    $('edit-tab').classList.remove('primary');
   }
 }
 
@@ -82,7 +74,6 @@ async function selectCommit(sha, shouldRender = true) {
 async function selectCommitFile(path) {
   if (!state.selectedCommit) return;
   state.selectedCommitFile = path;
-  $('current-path').textContent = `${state.selectedCommit.shortHash} · ${path}`;
   const data = await api(`/api/commit-diff?sha=${encodeURIComponent(state.selectedCommit.hash)}&path=${encodeURIComponent(path)}`);
   $('viewer').innerHTML = `<pre>${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
   renderHistory();

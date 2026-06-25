@@ -21,6 +21,63 @@ function setMessage(text, type = '') {
   $('message').className = `message ${type}`;
 }
 
+let activeActionMenu = null;
+
+function closeActionMenu() {
+  if (!activeActionMenu) return;
+  activeActionMenu.remove();
+  activeActionMenu = null;
+}
+
+function showActionMenu(anchor, items) {
+  closeActionMenu();
+
+  const menu = document.createElement('div');
+  menu.className = 'action-menu';
+  menu.setAttribute('role', 'menu');
+
+  for (const item of items) {
+    if (item.separator) {
+      const separator = document.createElement('div');
+      separator.className = 'action-menu-separator';
+      menu.appendChild(separator);
+      continue;
+    }
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = [
+      'action-menu-item',
+      item.active ? 'active' : '',
+      item.danger ? 'danger' : '',
+    ].filter(Boolean).join(' ');
+    button.disabled = Boolean(item.disabled);
+    button.textContent = item.label;
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      closeActionMenu();
+      if (typeof item.action === 'function') {
+        await item.action();
+      }
+    });
+    menu.appendChild(button);
+  }
+
+  document.body.appendChild(menu);
+  activeActionMenu = menu;
+  positionActionMenu(anchor, menu);
+}
+
+function positionActionMenu(anchor, menu) {
+  const rect = anchor.getBoundingClientRect();
+  const margin = 6;
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - menuRect.width - margin, Math.max(margin, rect.right - menuRect.width));
+  const top = Math.min(window.innerHeight - menuRect.height - margin, rect.bottom + margin);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${Math.max(margin, top)}px`;
+}
+
 function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -34,3 +91,11 @@ function escapeHTML(value) {
 function escapeAttr(value) {
   return escapeHTML(value).replace(/'/g, '&#39;');
 }
+
+document.addEventListener('click', (event) => {
+  if (activeActionMenu && !event.target.closest('.action-menu')) {
+    closeActionMenu();
+  }
+});
+window.addEventListener('resize', closeActionMenu);
+window.addEventListener('scroll', closeActionMenu, true);

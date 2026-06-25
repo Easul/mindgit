@@ -1,34 +1,16 @@
 function updateEditButton(label, options = {}) {
-  const editButton = $('edit-tab');
-  const saveButton = $('save-tab');
-  if (editButton) {
-    editButton.textContent = 'Edit';
-    editButton.disabled = false;
-    editButton.classList.toggle('primary', false);
-  }
-  if (!saveButton) return;
-  const isEditMode = state.mode === 'edit';
-  saveButton.hidden = !isEditMode;
-  saveButton.textContent = isEditMode ? label : 'Save';
-  saveButton.disabled = Boolean(options.disabled) || !isEditMode;
-  saveButton.classList.toggle('primary', isEditMode);
+  renderFileTabs();
 }
 
 async function renderSelected() {
   if (!state.selected) return;
-  $('current-path').textContent = state.selected;
-  $('diff-tab').classList.toggle('active', state.mode === 'diff');
-  $('full-tab').classList.toggle('active', state.mode === 'full');
-  $('edit-tab').classList.toggle('active', state.mode === 'edit');
-  const saveButton = $('save-tab');
-  if (saveButton) {
-    saveButton.hidden = state.mode !== 'edit';
-  }
 
   const file = state.status.files.find((item) => item.path === state.selected);
-  $('review-summary').textContent = file
-    ? `${file.path}: ${file.status}，新增 ${file.additions} 行，删除 ${file.deletions} 行。`
-    : state.selected;
+  if ($('review-summary')) {
+    $('review-summary').textContent = file
+      ? `${file.path}: ${file.status}，新增 ${file.additions} 行，删除 ${file.deletions} 行。`
+      : state.selected;
+  }
 
   const isBinary = isLikelyBinary(state.selected);
   const isImage = isImageFile(state.selected);
