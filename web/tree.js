@@ -277,9 +277,9 @@ async function selectFile(path, options = {}) {
   state.selected = path;
   const savedState = options.restoreState === false ? null : state.tabStates[path];
   state.mode = options.mode || savedState?.mode || 'full';
-  state.mobileViewerExpanded = true;
+  state.mobileViewerExpanded = Boolean(options.mobileViewerExpanded ?? state.mobileViewerExpanded);
   state.editorReady = false;
-  state.expandedGroups.add(groupForPath(path));
+  await ensurePathVisible(path);
   syncLayoutState();
   renderStatus();
   renderFileTabs();
@@ -304,6 +304,16 @@ function ancestorPaths(path) {
   return ancestors;
 }
 
+async function ensurePathVisible(path) {
+  for (const ancestor of ancestorPaths(path)) {
+    state.expandedGroups.add(ancestor);
+    if (!state.children.has(ancestor)) {
+      const data = await api(`/api/tree?path=${encodeURIComponent(ancestor)}`);
+      state.children.set(ancestor, data.files);
+    }
+  }
+}
+
 function currentModeForPath(path) {
   if (path === state.selected) return state.mode;
   return state.tabStates[path]?.mode || 'full';
@@ -321,6 +331,10 @@ function modeIcon(mode) {
 
 function modeLabel(mode) {
   return { diff: 'Diff', full: 'Full', edit: 'Edit' }[mode] || 'Full';
+}
+
+function isMobileLayout() {
+  return window.matchMedia('(max-width: 900px)').matches;
 }
 
 function openTabMenu(anchor, path) {
@@ -345,11 +359,13 @@ function openTabMenu(anchor, path) {
       { separator: true },
       { label: 'Split Right', action: () => openSplitPane('right', path) },
       { label: 'Split Down', action: () => openSplitPane('down', path) },
-      {
+    );
+    if (isMobileLayout()) {
+      items.push({
         label: state.mobileViewerExpanded ? 'Collapse Mobile Viewer' : 'Expand Mobile Viewer',
         action: () => toggleMobileViewer(),
-      },
-    );
+      });
+    }
   } else {
     items.push(
       { separator: true },

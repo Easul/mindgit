@@ -14,6 +14,7 @@ async function loadHistory() {
 }
 
 function renderHistory() {
+  syncLayoutState();
   $('root').textContent = state.status ? state.status.root : '-';
   $('branch').textContent = state.status ? state.status.branch : '-';
   $('modified').textContent = '0';
@@ -74,6 +75,7 @@ async function selectCommit(sha, shouldRender = true) {
 async function selectCommitFile(path) {
   if (!state.selectedCommit) return;
   state.selectedCommitFile = path;
+  syncLayoutState();
   const data = await api(`/api/commit-diff?sha=${encodeURIComponent(state.selectedCommit.hash)}&path=${encodeURIComponent(path)}`);
   $('viewer').innerHTML = `<pre>${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
   renderHistory();

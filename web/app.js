@@ -9,6 +9,7 @@ const state = {
   mobileViewerExpanded: false,
   editorReady: false,
   saveInProgress: false,
+  instanceId: window.crypto?.randomUUID ? window.crypto.randomUUID() : String(Date.now() + Math.random()),
   splitPane: {
     open: false,
     orientation: 'right',
@@ -111,6 +112,77 @@ function notifyEmbedState() {
   }, window.location.origin);
 }
 
+function splitIframeWindow() {
+  return $('split-pane-iframe')?.contentWindow || null;
+}
+
+function editorContentFor(path) {
+  if (state.selected !== path) return null;
+  const editor = $('editor');
+  if (editor) return editor.value;
+  return state.mode === 'edit' ? state.content : null;
+}
+
+function broadcastEditorContent(path, content) {
+  const message = {
+    type: 'mindgit:file-content-updated',
+    payload: {
+      path,
+      content,
+      sourceId: state.instanceId,
+    },
+  };
+
+  if (state.embed && window.parent) {
+    window.parent.postMessage(message, window.location.origin);
+    return;
+  }
+
+  const target = splitIframeWindow();
+  if (target && state.splitPane.open) {
+    target.postMessage(message, window.location.origin);
+  }
+}
+
+function applyExternalFileContent(path, content) {
+  if (!path || state.selected !== path) return;
+
+  state.content = content;
+  const editor = $('editor');
+  if (editor) {
+    if (editor.value === content) return;
+    const selectionStart = Math.min(editor.selectionStart, content.length);
+    const selectionEnd = Math.min(editor.selectionEnd, content.length);
+    editor._mindgitApplyingRemote = true;
+    editor.value = content;
+    editor.setSelectionRange(selectionStart, selectionEnd);
+    editor.dispatchEvent(new Event('input'));
+    editor._mindgitApplyingRemote = false;
+    return;
+  }
+
+  if (state.mode === 'full' && !isLikelyBinary(path) && !isImageFile(path)) {
+    renderFullContent(content, path);
+  }
+}
+
+function handleFileContentMessage(event) {
+  if (event.origin !== window.location.origin) return false;
+  const data = event.data || {};
+  if (data.type !== 'mindgit:file-content-updated') return false;
+
+  const payload = data.payload || {};
+  if (!payload.path || payload.sourceId === state.instanceId) return true;
+
+  applyExternalFileContent(payload.path, payload.content || '');
+
+  const iframeWindow = splitIframeWindow();
+  if (!state.embed && iframeWindow && event.source !== iframeWindow) {
+    iframeWindow.postMessage(data, window.location.origin);
+  }
+  return true;
+}
+
 function parseInitialTabs() {
   try {
     return uniquePaths(JSON.parse(new URLSearchParams(window.location.search).get('tabs') || '[]'));
@@ -174,6 +246,10 @@ function syncLayoutState() {
   document.documentElement.dataset.view = state.view;
   document.documentElement.dataset.mode = state.mode;
   document.documentElement.dataset.selected = state.selected ? 'true' : 'false';
+  document.documentElement.dataset.viewerOpen = (
+    (state.view === 'worktree' && state.selected) ||
+    (state.view === 'history' && state.selectedCommitFile)
+  ) ? 'true' : 'false';
   document.documentElement.dataset.mobileExpanded = state.mobileViewerExpanded ? 'true' : 'false';
   document.documentElement.dataset.embed = state.embed ? 'true' : 'false';
   document.documentElement.dataset.splitOpen = state.splitPane.open ? 'true' : 'false';
@@ -233,6 +309,33 @@ async function refresh() {
       $('viewer').innerHTML = `<div class="empty">${state.status.files.length ? 'Expand a directory and select a changed file' : 'Working tree clean'}</div>`;
     }
     renderSplitPane();
+    setMessage('Updated', 'ok');
+  } catch (error) {
+    setMessage(error.message, 'error');
+  }
+}
+
+async function refreshWorkspaceOutline() {
+  try {
+    setMessage('Refreshing...');
+    syncLayoutState();
+    if ($('worktree-view')) $('worktree-view').classList.toggle('active', state.view === 'worktree');
+    if ($('history-view')) $('history-view').classList.toggle('active', state.view === 'history');
+
+    if (state.view === 'history') {
+      await loadHistory();
+      renderHistory();
+      setMessage('Updated', 'ok');
+      return;
+    }
+
+    const fileList = $('file-list');
+    const treeScrollTop = fileList ? fileList.scrollTop : 0;
+    state.status = await api('/api/status');
+    await refreshLoadedGroups();
+    renderStatus();
+    renderFileTabs();
+    if (fileList) fileList.scrollTop = treeScrollTop;
     setMessage('Updated', 'ok');
   } catch (error) {
     setMessage(error.message, 'error');
@@ -331,6 +434,14 @@ function renderSplitPane() {
         src="${escapeAttr(splitSrc(state.splitPane))}">
       </iframe>
     </div>`;
+
+  const iframe = $('split-pane-iframe');
+  iframe?.addEventListener('load', () => {
+    const content = editorContentFor(state.splitPane.selectedPath);
+    if (content !== null) {
+      broadcastEditorContent(state.splitPane.selectedPath, content);
+    }
+  });
 }
 
 function openSplitPane(orientation, path = state.selected) {
@@ -357,6 +468,7 @@ function closeSplitPane() {
 }
 
 function handleSplitPaneMessage(event) {
+  if (handleFileContentMessage(event)) return;
   if (state.embed || event.origin !== window.location.origin) return;
   const data = event.data || {};
   if (data.type === 'mindgit:close-split') {
@@ -369,6 +481,10 @@ function handleSplitPaneMessage(event) {
   state.splitPane.selectedPath = typeof payload.selectedPath === 'string'
     ? payload.selectedPath
     : state.splitPane.tabs[0] || '';
+  if (!state.splitPane.selectedPath && state.splitPane.tabs.length === 0) {
+    closeSplitPane();
+    return;
+  }
   state.splitPane.mode = normalizeMode(payload.mode);
   saveWorkspaceState();
 }
@@ -456,7 +572,7 @@ syncLayoutState();
 if ($('worktree-view')) $('worktree-view').addEventListener('click', () => setView('worktree'));
 if ($('history-view')) $('history-view').addEventListener('click', () => setView('history'));
 if ($('theme-toggle')) $('theme-toggle').addEventListener('click', toggleTheme);
-if ($('refresh')) $('refresh').addEventListener('click', refresh);
+if ($('refresh')) $('refresh').addEventListener('click', refreshWorkspaceOutline);
 if ($('tree-root-menu')) $('tree-root-menu').addEventListener('click', (event) => {
   event.stopPropagation();
   if (state.view !== 'worktree') return;
