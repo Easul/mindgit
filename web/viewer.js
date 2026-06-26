@@ -38,28 +38,25 @@ async function renderSelected() {
     const lineNumbers = renderLineNumberSpans(splitEditorLines(data.content).length, 'editor-line-num');
 
     $('viewer').innerHTML = `<div class="editor-wrapper">
-      <div class="editor-current-line-highlight" id="editor-line-highlight" style="display: none;"></div>
       <div class="editor-line-gutter" id="editor-line-gutter">
         <div class="editor-line-numbers" id="editor-line-numbers">${lineNumbers}</div>
       </div>
-      <pre class="editor-highlight ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor-highlight" aria-hidden="true"></pre>
-      <textarea class="editor ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor" spellcheck="false"></textarea>
+      <div class="editor-scroll-area">
+        <div class="editor-current-line-highlight" id="editor-line-highlight" style="display: none;"></div>
+        <pre class="editor-highlight ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor-highlight" aria-hidden="true"></pre>
+        <textarea class="editor ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor" spellcheck="false"></textarea>
+      </div>
     </div>`;
 
     const editor = $('editor');
-    const gutter = $('editor-line-gutter');
     editor.value = data.content;
-
-    setTimeout(() => {
-      const lineNumberWidth = gutter.offsetWidth;
-      editor.style.paddingLeft = `${lineNumberWidth + 12}px`;
-    }, 0);
 
     editor.focus();
     setupEditorShortcuts(editor);
     editor.dispatchEvent(new Event('input'));
     state.editorReady = true;
     updateEditButton('Save', { disabled: state.saveInProgress, primary: true });
+    syncViewerHeight();
     return;
   }
 
@@ -80,6 +77,7 @@ async function renderSelected() {
     const data = await api(`/api/diff?path=${encodeURIComponent(state.selected)}`);
     $('viewer').innerHTML = `<pre>${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
   }
+  syncViewerHeight();
 }
 
 function isImageFile(path) {
@@ -303,26 +301,64 @@ function renderFullContent(content, filename) {
   });
 
   const lineNumbersHTML = lines.map((_, i) =>
-    `<span class="line-num" data-line="${i + 1}">${i + 1}</span>`
+    `<span class="line-num code-viewer-line-num" data-line="${i + 1}">${i + 1}</span>`
   ).join('');
 
   const codeContentHTML = highlightedLines.map((line, i) =>
     `<span class="code-line" data-line="${i + 1}">${line}</span>`
   ).join('');
 
-  $('viewer').innerHTML = `<pre><code class="line-numbers">${lineNumbersHTML}</code><code class="code-content">${codeContentHTML}</code></pre>`;
+  $('viewer').innerHTML = `<div class="code-viewer">
+    <div class="code-viewer-gutter" id="code-viewer-gutter">
+      <div class="code-viewer-line-numbers" id="code-viewer-line-numbers">${lineNumbersHTML}</div>
+    </div>
+    <div class="code-viewer-scroll" id="code-viewer-scroll">
+      <pre class="code-viewer-pre"><code class="code-content">${codeContentHTML}</code></pre>
+    </div>
+  </div>`;
 
-  $('viewer').querySelectorAll('.line-num').forEach(lineNum => {
+  const scrollArea = $('code-viewer-scroll');
+  const lineNumbers = $('code-viewer-line-numbers');
+  const syncCodeViewerGutter = () => {
+    if (lineNumbers && scrollArea) {
+      lineNumbers.style.transform = `translateY(${-scrollArea.scrollTop}px)`;
+    }
+  };
+  scrollArea?.addEventListener('scroll', syncCodeViewerGutter);
+  syncCodeViewerGutter();
+
+  $('viewer').querySelectorAll('.code-viewer-line-num').forEach(lineNum => {
     lineNum.addEventListener('click', () => {
       scrollToLine(parseInt(lineNum.dataset.line, 10));
     });
   });
 }
 
-function scrollToLine(lineNumber) {
+function measureMonospaceCharWidth(referenceEl) {
+  if (!referenceEl) return 8;
+  if (referenceEl._mindgitCharWidth) return referenceEl._mindgitCharWidth;
+
+  const probe = document.createElement('span');
+  const style = getComputedStyle(referenceEl);
+  probe.textContent = 'M';
+  probe.style.position = 'absolute';
+  probe.style.visibility = 'hidden';
+  probe.style.whiteSpace = 'pre';
+  probe.style.font = style.font;
+  probe.style.letterSpacing = style.letterSpacing;
+  document.body.appendChild(probe);
+
+  referenceEl._mindgitCharWidth = probe.getBoundingClientRect().width || 8;
+  probe.remove();
+  return referenceEl._mindgitCharWidth;
+}
+
+function scrollToLine(lineNumber, options = {}) {
   const viewer = $('viewer');
-  const preEl = viewer?.querySelector('pre');
-  if (!viewer || !preEl || !Number.isInteger(lineNumber) || lineNumber < 1) return false;
+  const scrollContainer = viewer?.querySelector('#code-viewer-scroll') || viewer?.querySelector('pre');
+  const metricsEl = viewer?.querySelector('.code-viewer-pre') || viewer?.querySelector('pre');
+  if (!viewer || !scrollContainer || !metricsEl || !Number.isInteger(lineNumber) || lineNumber < 1) return false;
+  const { column = 1, length = 1 } = options;
 
   viewer.querySelectorAll('.code-line.highlighted').forEach((el) => el.classList.remove('highlighted'));
 
@@ -330,9 +366,14 @@ function scrollToLine(lineNumber) {
   if (!targetLine) return false;
 
   targetLine.classList.add('highlighted');
-  const targetTop = targetLine.offsetTop - ((preEl.clientHeight - targetLine.offsetHeight) / 2);
-  preEl.scrollTop = Math.max(0, targetTop);
-  preEl.scrollLeft = 0;
+  const targetTop = targetLine.offsetTop - ((scrollContainer.clientHeight - targetLine.offsetHeight) / 2);
+  scrollContainer.scrollTop = Math.max(0, targetTop);
+
+  const charWidth = measureMonospaceCharWidth(metricsEl);
+  const focusColumn = Math.max(1, column);
+  const focusWidth = Math.max(charWidth, Math.max(1, length) * charWidth);
+  const targetLeft = targetLine.offsetLeft + ((focusColumn - 1) * charWidth) - ((scrollContainer.clientWidth - focusWidth) / 2);
+  scrollContainer.scrollLeft = Math.max(0, targetLeft);
   return true;
 }
 
@@ -343,16 +384,20 @@ async function search() {
     setMessage('Searching...');
     const data = await api(`/api/search?q=${encodeURIComponent(query)}`);
     $('search-results').innerHTML = data.results.length ? data.results.map((result) => `
-      <button data-search-path="${escapeAttr(result.path)}" data-search-line="${result.line}">
+      <button data-search-path="${escapeAttr(result.path)}" data-search-line="${result.line}" data-search-column="${result.column}">
         <div class="where">${escapeHTML(result.path)}:${result.line}:${result.column}</div>
         <div class="preview">${escapeHTML(result.preview)}</div>
       </button>`).join('') : '<p>No matches</p>';
     for (const button of document.querySelectorAll('[data-search-path]')) {
       button.addEventListener('click', async () => {
         const lineNumber = parseInt(button.dataset.searchLine, 10);
+        const columnNumber = parseInt(button.dataset.searchColumn, 10);
         await selectFile(button.dataset.searchPath, { mode: 'full', restoreState: false });
         if (Number.isInteger(lineNumber)) {
-          scrollToLine(lineNumber);
+          scrollToLine(lineNumber, {
+            column: Number.isInteger(columnNumber) ? columnNumber : 1,
+            length: query.length,
+          });
         }
       });
     }

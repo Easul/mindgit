@@ -34,6 +34,7 @@ const $ = (id) => document.getElementById(id);
 
 const layoutStorageKey = 'mindgit-layout-v1';
 const workspaceStorageKey = 'mindgit-workspace-v1';
+let splitPaneResizeObserver = null;
 
 function normalizeMode(mode) {
   return ['diff', 'full', 'edit'].includes(mode) ? mode : 'full';
@@ -251,6 +252,18 @@ function applyLayoutVars() {
   root.style.setProperty('--split-side-down', `${(1 - state.layout.splitRatioDown) * 100}%`);
 }
 
+function syncViewerHeight() {
+  const pane = document.querySelector('.primary-editor-pane');
+  const viewer = $('viewer');
+  if (!pane || !viewer) return;
+
+  const tabs = document.querySelector('.primary-editor-pane > .file-tabs');
+  const tabsVisible = tabs && getComputedStyle(tabs).display !== 'none';
+  const tabsHeight = tabsVisible ? tabs.offsetHeight : 0;
+  const nextHeight = Math.max(0, pane.clientHeight - tabsHeight);
+  viewer.style.height = `${nextHeight}px`;
+}
+
 function syncLayoutState() {
   applyLayoutVars();
   document.documentElement.dataset.view = state.view;
@@ -264,6 +277,7 @@ function syncLayoutState() {
   document.documentElement.dataset.embed = state.embed ? 'true' : 'false';
   document.documentElement.dataset.splitOpen = state.splitPane.open ? 'true' : 'false';
   document.documentElement.dataset.splitOrientation = state.splitPane.orientation;
+  syncViewerHeight();
 
   const rootMenuButton = $('tree-root-menu');
   if (rootMenuButton) rootMenuButton.hidden = state.view !== 'worktree';
@@ -420,6 +434,37 @@ function splitSrc(pane) {
   return `/?${params.toString()}`;
 }
 
+function cleanupSplitPaneResizeObserver() {
+  splitPaneResizeObserver?.disconnect();
+  splitPaneResizeObserver = null;
+}
+
+function syncSplitIframeViewport(iframe) {
+  const doc = iframe?.contentDocument;
+  if (!doc) return;
+
+  doc.documentElement.style.height = '100%';
+  doc.documentElement.style.minHeight = '0';
+  doc.documentElement.style.width = '100%';
+  doc.documentElement.style.overflow = 'hidden';
+  doc.body.style.height = '100%';
+  doc.body.style.minHeight = '0';
+  doc.body.style.width = '100%';
+  doc.body.style.overflow = 'hidden';
+  const view = doc.defaultView;
+  if (view) view.dispatchEvent(new view.Event('resize'));
+}
+
+function observeSplitIframeViewport(iframe) {
+  cleanupSplitPaneResizeObserver();
+  if (!iframe || typeof ResizeObserver === 'undefined') return;
+
+  splitPaneResizeObserver = new ResizeObserver(() => {
+    syncSplitIframeViewport(iframe);
+  });
+  splitPaneResizeObserver.observe(iframe);
+}
+
 function renderSplitPane() {
   const host = $('split-pane-host');
   const area = $('viewer-split-area');
@@ -432,9 +477,11 @@ function renderSplitPane() {
   area.classList.toggle('split-down', state.splitPane.open && state.splitPane.orientation === 'down');
 
   if (!splitVisible || !state.splitPane.selectedPath) {
+    cleanupSplitPaneResizeObserver();
     host.hidden = true;
     if (resizer) resizer.hidden = true;
     host.innerHTML = '';
+    syncViewerHeight();
     return;
   }
 
@@ -451,13 +498,17 @@ function renderSplitPane() {
     </div>`;
 
   const iframe = $('split-pane-iframe');
+  observeSplitIframeViewport(iframe);
   iframe?.addEventListener('load', () => {
+    syncSplitIframeViewport(iframe);
     const content = editorContentFor(state.splitPane.selectedPath);
     if (content !== null) {
       broadcastEditorContent(state.splitPane.selectedPath, content);
     }
     notifySplitTheme();
+    syncViewerHeight();
   });
+  syncViewerHeight();
 }
 
 function openSplitPane(orientation, path = state.selected) {
@@ -475,6 +526,7 @@ function openSplitPane(orientation, path = state.selected) {
 }
 
 function closeSplitPane() {
+  cleanupSplitPaneResizeObserver();
   state.splitPane.open = false;
   state.splitPane.selectedPath = '';
   state.splitPane.tabs = [];
@@ -523,17 +575,19 @@ function setupResizer(id, onPointerDown) {
   el.addEventListener('pointerdown', onPointerDown);
 }
 
-function startResize(event, move, done) {
+function startResize(event, move, done, axis = 'col') {
   const target = event.currentTarget;
   event.preventDefault();
   target?.setPointerCapture?.(event.pointerId);
   document.body.classList.add('is-resizing');
+  document.body.classList.add(axis === 'row' ? 'is-resizing-row' : 'is-resizing-col');
 
   const finish = () => {
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', finish);
     window.removeEventListener('pointercancel', finish);
     document.body.classList.remove('is-resizing');
+    document.body.classList.remove('is-resizing-row', 'is-resizing-col');
     target?.releasePointerCapture?.(event.pointerId);
     done();
   };
@@ -554,7 +608,7 @@ function setupDesktopResizers() {
       state.layout.leftPaneWidth = clamp(startWidth + delta, 180, 420);
       applyLayoutVars();
     };
-    startResize(event, move, saveLayoutPrefs);
+    startResize(event, move, saveLayoutPrefs, 'col');
   });
 
   setupResizer('right-pane-resizer', (event) => {
@@ -567,7 +621,7 @@ function setupDesktopResizers() {
       state.layout.rightPaneWidth = clamp(startWidth + delta, 200, 480);
       applyLayoutVars();
     };
-    startResize(event, move, saveLayoutPrefs);
+    startResize(event, move, saveLayoutPrefs, 'col');
   });
 
   setupResizer('split-pane-resizer', (event) => {
@@ -590,8 +644,15 @@ function setupDesktopResizers() {
         state.layout.splitRatioDown = clamp(startRatio + delta, 0.25, 0.75);
       }
       applyLayoutVars();
+      syncSplitIframeViewport($('split-pane-iframe'));
+      syncViewerHeight();
     };
-    startResize(event, move, saveLayoutPrefs);
+    startResize(
+      event,
+      move,
+      saveLayoutPrefs,
+      state.splitPane.orientation === 'down' ? 'row' : 'col',
+    );
   });
 }
 
@@ -612,6 +673,8 @@ if ($('search-form')) $('search-form').addEventListener('submit', (event) => {
   search();
 });
 window.addEventListener('message', handleSplitPaneMessage);
+window.addEventListener('beforeunload', cleanupSplitPaneResizeObserver);
+window.addEventListener('resize', syncViewerHeight);
 setupDesktopResizers();
 
 async function bootstrap() {
@@ -627,6 +690,7 @@ async function bootstrap() {
     }
   }
   renderSplitPane();
+  requestAnimationFrame(syncViewerHeight);
 }
 
 bootstrap();
