@@ -23,6 +23,11 @@ function setupEditorShortcuts(editor) {
     }
   }
 
+  function revealEditorRange(start, end = start) {
+    centerEditorSelection(editor, start, end, LINE_HEIGHT);
+    syncEditorChrome();
+  }
+
   function updateCurrentLineHighlight(lineNum) {
     if (!lineHighlight) return;
     const top = EDITOR_PADDING_TOP + ((lineNum - 1) * LINE_HEIGHT) - editor.scrollTop;
@@ -112,10 +117,7 @@ function setupEditorShortcuts(editor) {
         const pos = getLineStartPositionFromLines(lines, lineNum);
         editor.focus();
         editor.setSelectionRange(pos, pos);
-
-        const lineTop = (lineNum - 1) * LINE_HEIGHT;
-        editor.scrollTop = Math.max(0, lineTop - Math.max(0, (editor.clientHeight - LINE_HEIGHT) / 2));
-        syncEditorChrome();
+        revealEditorRange(pos, pos);
         updateCurrentLineHighlight(lineNum);
       }
     });
@@ -143,8 +145,6 @@ function setupEditorShortcuts(editor) {
     const lineNumbers = renderLineNumberSpans(splitEditorLines(content).length, 'editor-line-num');
     if (lineNumbersEl) {
       lineNumbersEl.innerHTML = lineNumbers;
-      const lineNumberWidth = lineGutterEl ? lineGutterEl.offsetWidth : lineNumbersEl.offsetWidth;
-      editor.style.paddingLeft = `${lineNumberWidth + 12}px`;
     }
 
     syncEditorChrome();
@@ -500,6 +500,7 @@ function selectEditorMatch(bar, direction, fromStart = false) {
   const match = matches[nextIndex];
   editor.focus();
   editor.setSelectionRange(match.start, match.end);
+  centerEditorSelection(editor, match.start, match.end);
   updateCommandBarMatches(bar);
   return true;
 }
@@ -562,7 +563,7 @@ function goToEditorLine(editor, lineNum) {
   const pos = getLineStartPositionFromLines(lines, target);
   editor.focus();
   editor.setSelectionRange(pos, pos);
-  editor.scrollTop = Math.max(0, (target - 1) * 20 - Math.max(0, (editor.clientHeight - 20) / 2));
+  centerEditorSelection(editor, pos, pos, 20);
 }
 
 function lineIndexAtPosition(lines, position) {
@@ -723,6 +724,42 @@ function getEditorCharWidth(editor) {
   editor._mindgitCharWidth = probe.getBoundingClientRect().width || 8;
   probe.remove();
   return editor._mindgitCharWidth;
+}
+
+function findLineAndColumnAtPosition(lines, position) {
+  let offset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const end = offset + line.length;
+    if (position <= end || i === lines.length - 1) {
+      return { lineIndex: i, column: position - offset };
+    }
+    offset = end + 1;
+  }
+  return { lineIndex: Math.max(0, lines.length - 1), column: 0 };
+}
+
+function centerEditorSelection(editor, start, end = start, lineHeight = 20) {
+  const lines = splitEditorLines(editor.value);
+  const startPos = findLineAndColumnAtPosition(lines, start);
+  const endPos = findLineAndColumnAtPosition(lines, end);
+  const focusLine = startPos.lineIndex;
+  const focusColumn = startPos.column;
+  const selectionColumns = endPos.lineIndex === startPos.lineIndex
+    ? Math.max(1, endPos.column - startPos.column)
+    : 1;
+
+  const targetTop = (focusLine * lineHeight) - Math.max(0, (editor.clientHeight - lineHeight) / 2);
+  editor.scrollTop = Math.max(0, targetTop);
+
+  if (editor.classList.contains('wrap-enabled')) return;
+
+  const style = getComputedStyle(editor);
+  const paddingLeft = parseFloat(style.paddingLeft) || 0;
+  const charWidth = getEditorCharWidth(editor);
+  const focusWidth = Math.max(charWidth, selectionColumns * charWidth);
+  const targetLeft = paddingLeft + (focusColumn * charWidth) - Math.max(0, (editor.clientWidth - focusWidth) / 2);
+  editor.scrollLeft = Math.max(0, targetLeft);
 }
 
 function getMouseRowCol(editor, event, lineHeight) {
