@@ -22,11 +22,238 @@ function setMessage(text, type = '') {
 }
 
 let activeActionMenu = null;
+let activePromptDialog = null;
+let pendingBareAltKey = false;
 
 function closeActionMenu() {
   if (!activeActionMenu) return;
   activeActionMenu.remove();
   activeActionMenu = null;
+}
+
+function closePromptDialog(result = null) {
+  if (!activePromptDialog) return;
+  const dialog = activePromptDialog;
+  activePromptDialog = null;
+  dialog.cleanup();
+  dialog.resolve(result);
+}
+
+function isEditableTarget(target) {
+  if (!target) return false;
+  if (target instanceof HTMLInputElement) return true;
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLSelectElement) return true;
+  if (target.isContentEditable) return true;
+  return false;
+}
+
+function shouldSuppressBareAlt(event) {
+  if (event.key !== 'Alt') return false;
+  if (event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  return !isEditableTarget(event.target);
+}
+
+function showPromptDialog(options = {}) {
+  closeActionMenu();
+  closePromptDialog(null);
+
+  const {
+    title = 'Input',
+    message = '',
+    value = '',
+    placeholder = '',
+    multiline = false,
+    confirmLabel = 'OK',
+    cancelLabel = 'Cancel',
+    rows = 6,
+  } = options;
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'prompt-dialog-backdrop';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'prompt-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+
+    const titleEl = document.createElement('h3');
+    titleEl.className = 'prompt-dialog-title';
+    titleEl.textContent = title;
+    dialog.appendChild(titleEl);
+
+    if (message) {
+      const messageEl = document.createElement('p');
+      messageEl.className = 'prompt-dialog-message';
+      messageEl.textContent = message;
+      dialog.appendChild(messageEl);
+    }
+
+    const field = multiline ? document.createElement('textarea') : document.createElement('input');
+    field.className = 'prompt-dialog-field';
+    field.placeholder = placeholder;
+    field.value = value;
+    if (multiline) {
+      field.rows = rows;
+      field.spellcheck = false;
+    } else {
+      field.type = 'text';
+      field.autocomplete = 'off';
+      field.spellcheck = false;
+    }
+    dialog.appendChild(field);
+
+    const actions = document.createElement('div');
+    actions.className = 'prompt-dialog-actions';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = cancelLabel;
+    cancelButton.addEventListener('click', () => closePromptDialog(null));
+    actions.appendChild(cancelButton);
+
+    const confirmButton = document.createElement('button');
+    confirmButton.type = 'button';
+    confirmButton.className = 'primary';
+    confirmButton.textContent = confirmLabel;
+    confirmButton.addEventListener('click', () => closePromptDialog(field.value));
+    actions.appendChild(confirmButton);
+
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const keydown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closePromptDialog(null);
+        return;
+      }
+
+      if (multiline) {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          closePromptDialog(field.value);
+        }
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        closePromptDialog(field.value);
+      }
+    };
+
+    const overlayMouseDown = (event) => {
+      if (event.target === overlay) {
+        closePromptDialog(null);
+      }
+    };
+
+    const cleanup = () => {
+      document.removeEventListener('keydown', keydown, true);
+      overlay.removeEventListener('mousedown', overlayMouseDown);
+      overlay.remove();
+    };
+
+    activePromptDialog = { cleanup, resolve };
+    document.addEventListener('keydown', keydown, true);
+    overlay.addEventListener('mousedown', overlayMouseDown);
+
+    requestAnimationFrame(() => {
+      field.focus();
+      field.setSelectionRange?.(field.value.length, field.value.length);
+    });
+  });
+}
+
+function showConfirmDialog(options = {}) {
+  closeActionMenu();
+  closePromptDialog(null);
+
+  const {
+    title = 'Confirm',
+    message = '',
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
+    danger = false,
+  } = options;
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'prompt-dialog-backdrop';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'prompt-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+
+    const titleEl = document.createElement('h3');
+    titleEl.className = 'prompt-dialog-title';
+    titleEl.textContent = title;
+    dialog.appendChild(titleEl);
+
+    if (message) {
+      const messageEl = document.createElement('p');
+      messageEl.className = 'prompt-dialog-message';
+      messageEl.textContent = message;
+      dialog.appendChild(messageEl);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'prompt-dialog-actions';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = cancelLabel;
+    cancelButton.addEventListener('click', () => closePromptDialog(false));
+    actions.appendChild(cancelButton);
+
+    const confirmButton = document.createElement('button');
+    confirmButton.type = 'button';
+    confirmButton.className = danger ? 'danger' : 'primary';
+    confirmButton.textContent = confirmLabel;
+    confirmButton.addEventListener('click', () => closePromptDialog(true));
+    actions.appendChild(confirmButton);
+
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const keydown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closePromptDialog(false);
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        closePromptDialog(true);
+      }
+    };
+
+    const overlayMouseDown = (event) => {
+      if (event.target === overlay) {
+        closePromptDialog(false);
+      }
+    };
+
+    const cleanup = () => {
+      document.removeEventListener('keydown', keydown, true);
+      overlay.removeEventListener('mousedown', overlayMouseDown);
+      overlay.remove();
+    };
+
+    activePromptDialog = { cleanup, resolve };
+    document.addEventListener('keydown', keydown, true);
+    overlay.addEventListener('mousedown', overlayMouseDown);
+
+    requestAnimationFrame(() => {
+      confirmButton.focus();
+    });
+  });
 }
 
 function showActionMenu(anchor, items) {
@@ -96,6 +323,23 @@ document.addEventListener('click', (event) => {
   if (activeActionMenu && !event.target.closest('.action-menu')) {
     closeActionMenu();
   }
+});
+document.addEventListener('keydown', (event) => {
+  if (!shouldSuppressBareAlt(event)) {
+    pendingBareAltKey = false;
+    return;
+  }
+  pendingBareAltKey = true;
+  event.preventDefault();
+}, true);
+document.addEventListener('keyup', (event) => {
+  if (event.key !== 'Alt') return;
+  if (!pendingBareAltKey) return;
+  pendingBareAltKey = false;
+  event.preventDefault();
+}, true);
+window.addEventListener('blur', () => {
+  pendingBareAltKey = false;
 });
 window.addEventListener('resize', closeActionMenu);
 window.addEventListener('scroll', closeActionMenu, true);

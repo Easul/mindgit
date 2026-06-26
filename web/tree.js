@@ -442,7 +442,13 @@ function openTreeMenu(anchor, path, kind) {
 
 async function promptCreatePath(basePath, kind) {
   const label = kind === 'dir' ? 'folder' : 'file';
-  const input = window.prompt(`New ${label} name or relative path`);
+  const input = await showPromptDialog({
+    title: kind === 'dir' ? 'New Folder' : 'New File',
+    message: `Enter the ${label} name or a relative path under the current folder.`,
+    placeholder: kind === 'dir' ? 'docs/api' : 'docs/notes.md',
+    confirmLabel: 'Create',
+    cancelLabel: 'Cancel',
+  });
   if (input === null) return;
   const path = resolveCreatePath(basePath, input);
   if (!path) {
@@ -490,7 +496,14 @@ async function createPath(path, kind) {
 
 async function deletePath(path, isDir) {
   const target = isDir ? 'folder' : 'file';
-  if (!window.confirm(`Delete ${target} "${path}"? This cannot be undone.`)) return;
+  const confirmed = await showConfirmDialog({
+    title: `Delete ${isDir ? 'Folder' : 'File'}`,
+    message: `Delete ${target} "${path}"? This cannot be undone.`,
+    confirmLabel: 'Delete',
+    cancelLabel: 'Cancel',
+    danger: true,
+  });
+  if (!confirmed) return;
 
   try {
     setMessage('Deleting...');

@@ -36,11 +36,8 @@ function renderXmindSheet(sheet, index) {
 function renderXmindTopic(topic) {
   if (!topic || typeof topic !== 'object') return '';
   const children = xmindChildren(topic);
-  return `
-    <div class="mind-node-branch">
-      <div class="mind-node">${escapeHTML(topic.title || topic.text || 'Topic')}</div>
-      ${children.length ? `<div class="mind-node-children">${children.map(renderXmindTopic).join('')}</div>` : ''}
-    </div>`;
+  const text = topic.title || topic.text || 'Topic';
+  return `<div class="mind-node-branch"><div class="mind-node" title="${escapeHTML(text)}">${escapeHTML(text)}</div>${children.length ? `<div class="mind-node-children">${children.map(renderXmindTopic).join('')}</div>` : ''}</div>`;
 }
 
 function xmindChildren(topic) {

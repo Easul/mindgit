@@ -156,8 +156,17 @@
         color: var(--text);
       }
       .file-list, .review-body, .search-results { overflow: auto; }
-      .file-list { height: calc(100vh - 53px - 48px - 36px); }
-      .review-body { height: calc(100vh - 53px - 48px); }
+      aside,
+      .review {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .file-list,
+      .review-body {
+        flex: 1 1 auto;
+        min-height: 0;
+      }
       /* Custom scrollbar for file-list and review-body */
       .file-list::-webkit-scrollbar,
       .review-body::-webkit-scrollbar {
@@ -415,6 +424,52 @@
         height: 1px;
         margin: 5px 2px;
         background: var(--line);
+      }
+      .prompt-dialog-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1200;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(5, 8, 12, .58);
+        backdrop-filter: blur(4px);
+      }
+      .prompt-dialog {
+        width: min(640px, calc(100vw - 40px));
+        max-height: calc(100vh - 40px);
+        overflow: auto;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+      .prompt-dialog-title {
+        margin: 0 0 8px;
+        color: var(--text);
+        font-size: 16px;
+      }
+      .prompt-dialog-message {
+        margin: 0 0 14px;
+        color: var(--muted);
+        white-space: pre-wrap;
+      }
+      .prompt-dialog-field {
+        width: 100%;
+        min-width: 0;
+      }
+      textarea.prompt-dialog-field {
+        min-height: 180px;
+        resize: vertical;
+        line-height: 1.5;
+      }
+      .prompt-dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 16px;
       }
       .layout-resizer {
         position: relative;
@@ -946,15 +1001,18 @@
       }
       .mind-node {
         flex: 0 0 auto;
-        max-width: 260px;
+        min-width: 88px;
+        max-width: min(520px, 70vw);
         padding: 8px 12px;
         border: 1px solid var(--line);
         border-radius: 6px;
         background: var(--panel);
         color: var(--text);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        line-height: 1.45;
+        text-align: left;
       }
       button.mind-node {
         cursor: pointer;
@@ -980,7 +1038,7 @@
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
 
-      .review-body { padding: 14px; height: calc(100vh - 53px - 48px); }
+      .review-body { padding: 14px; }
       .card {
         border: 1px solid var(--line);
         border-radius: 12px;

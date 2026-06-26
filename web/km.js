@@ -49,7 +49,14 @@ function renderKmViewer(content, path, editable) {
   function render() {
     canvas.innerHTML = renderMindNode(root, selectedNode, editable);
     canvas.style.setProperty('--mind-zoom', String(zoom));
-    if (editable) bindMindNodeEvents();
+    updateSelectedNodeState();
+  }
+
+  function updateSelectedNodeState() {
+    const selectedPath = editable ? mindPathOf(root, selectedNode) : null;
+    for (const nodeEl of canvas.querySelectorAll('[data-node-path]')) {
+      nodeEl.classList.toggle('active', nodeEl.dataset.nodePath === selectedPath);
+    }
   }
 
   function commitHistory() {
@@ -70,28 +77,40 @@ function renderKmViewer(content, path, editable) {
     render();
   }
 
-  function bindMindNodeEvents() {
-    for (const nodeEl of canvas.querySelectorAll('[data-node-path]')) {
-      nodeEl.addEventListener('click', (event) => {
-        event.stopPropagation();
-        selectedNode = mindNodeAtPath(root, nodeEl.dataset.nodePath) || root;
-        render();
-      });
-      nodeEl.addEventListener('dblclick', (event) => {
-        event.stopPropagation();
-        const node = mindNodeAtPath(root, nodeEl.dataset.nodePath);
-        if (!node) return;
-        const next = window.prompt('Topic text', mindNodeText(node));
-        if (next !== null) {
-          setMindNodeText(node, next);
-          commitHistory();
-          render();
-        }
-      });
-    }
+  async function editNodeAtPath(path) {
+    const node = mindNodeAtPath(root, path);
+    if (!node) return;
+    const next = await showPromptDialog({
+      title: 'Edit Topic',
+      message: 'Use multiple lines when the node text is long. Press Ctrl/Cmd+Enter to save.',
+      value: mindNodeText(node),
+      placeholder: 'Topic text',
+      multiline: true,
+      confirmLabel: 'Save',
+      cancelLabel: 'Cancel',
+      rows: 8,
+    });
+    if (next === null) return;
+    selectedNode = node;
+    setMindNodeText(node, next);
+    commitHistory();
+    render();
   }
 
   if (editable) {
+    canvas.addEventListener('click', (event) => {
+      const nodeEl = event.target.closest('[data-node-path]');
+      if (!nodeEl || !canvas.contains(nodeEl)) return;
+      event.stopPropagation();
+      selectedNode = mindNodeAtPath(root, nodeEl.dataset.nodePath) || root;
+      updateSelectedNodeState();
+    });
+    canvas.addEventListener('dblclick', async (event) => {
+      const nodeEl = event.target.closest('[data-node-path]');
+      if (!nodeEl || !canvas.contains(nodeEl)) return;
+      event.stopPropagation();
+      await editNodeAtPath(nodeEl.dataset.nodePath);
+    });
     host.querySelector('[data-action="add-child"]').addEventListener('click', () => {
       if (!Array.isArray(selectedNode.children)) selectedNode.children = [];
       const next = { data: { text: 'New Topic' }, children: [] };
@@ -135,13 +154,8 @@ function renderKmViewer(content, path, editable) {
 
 function renderMindNode(node, selectedNode, editable, path = '0') {
   const children = Array.isArray(node.children) ? node.children : [];
-  return `
-    <div class="mind-node-branch">
-      <button class="mind-node ${node === selectedNode ? 'active' : ''}" type="button" ${editable ? `data-node-path="${path}"` : ''}>
-        ${escapeHTML(mindNodeText(node))}
-      </button>
-      ${children.length ? `<div class="mind-node-children">${children.map((child, index) => renderMindNode(child, selectedNode, editable, `${path}.${index}`)).join('')}</div>` : ''}
-    </div>`;
+  const text = mindNodeText(node);
+  return `<div class="mind-node-branch"><button class="mind-node ${node === selectedNode ? 'active' : ''}" type="button" title="${escapeHTML(text)}" ${editable ? `data-node-path="${path}"` : ''}>${escapeHTML(text)}</button>${children.length ? `<div class="mind-node-children">${children.map((child, index) => renderMindNode(child, selectedNode, editable, `${path}.${index}`)).join('')}</div>` : ''}</div>`;
 }
 
 function mindNodeText(node) {
@@ -177,6 +191,16 @@ function mindParentOf(root, target) {
   if (children.includes(target)) return root;
   for (const child of children) {
     const found = mindParentOf(child, target);
+    if (found) return found;
+  }
+  return null;
+}
+
+function mindPathOf(root, target, path = '0') {
+  if (root === target) return path;
+  const children = Array.isArray(root.children) ? root.children : [];
+  for (let index = 0; index < children.length; index += 1) {
+    const found = mindPathOf(children[index], target, `${path}.${index}`);
     if (found) return found;
   }
   return null;
