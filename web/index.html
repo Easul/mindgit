@@ -6,6 +6,56 @@
     <title>MindGit</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" id="hljs-dark">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" id="hljs-light" disabled>
+    <script>
+      (() => {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const isEmbed = params.get('embed') === '1';
+          if (isEmbed) {
+            document.documentElement.dataset.embed = 'true';
+            document.documentElement.dataset.viewerOpen = 'true';
+          }
+          const storedTheme = localStorage.getItem('mindgit-theme');
+          const hasStoredTheme = storedTheme === 'dark' || storedTheme === 'light';
+          const theme = hasStoredTheme
+            ? storedTheme
+            : (window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ? 'dark' : 'light');
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+          window.__mindgitInitialTheme = theme;
+          window.__mindgitInitialEmbed = isEmbed;
+          const darkStyle = document.getElementById('hljs-dark');
+          const lightStyle = document.getElementById('hljs-light');
+          if (darkStyle) darkStyle.disabled = theme !== 'dark';
+          if (lightStyle) lightStyle.disabled = theme === 'dark';
+        } catch {}
+      })();
+    </script>
+    <style>
+      html[data-embed="true"],
+      html[data-embed="true"] body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      html[data-embed="true"] header,
+      html[data-embed="true"] aside,
+      html[data-embed="true"] .review,
+      html[data-embed="true"] footer,
+      html[data-embed="true"] .layout-resizer,
+      html[data-embed="true"] .split-pane-resizer {
+        display: none !important;
+      }
+      html[data-embed="true"] .app {
+        height: 100%;
+      }
+      html[data-embed="true"] main,
+      html[data-embed="true"] section,
+      html[data-embed="true"] .viewer-split-area {
+        height: 100%;
+        min-height: 0;
+      }
+    </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <link rel="stylesheet" href="/vendor/mxgraph/css/common.css" />
     <link rel="stylesheet" href="/styles.css" />

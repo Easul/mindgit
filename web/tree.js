@@ -187,10 +187,10 @@ function saveCurrentTabState() {
   let scrollLeft = 0;
 
   if (viewer) {
-    const pre = viewer.querySelector('pre');
-    if (pre) {
-      scrollTop = pre.scrollTop;
-      scrollLeft = pre.scrollLeft;
+    const scrollTarget = getViewerScrollTarget(viewer);
+    if (scrollTarget) {
+      scrollTop = scrollTarget.scrollTop;
+      scrollLeft = scrollTarget.scrollLeft;
     } else {
       scrollTop = viewer.scrollTop;
       scrollLeft = viewer.scrollLeft;
@@ -251,10 +251,10 @@ function restoreTabState(path) {
     }
 
     if (viewer && savedState.scrollTop !== undefined) {
-      const pre = viewer.querySelector('pre');
-      if (pre) {
-        pre.scrollTop = savedState.scrollTop;
-        pre.scrollLeft = savedState.scrollLeft;
+      const scrollTarget = getViewerScrollTarget(viewer);
+      if (scrollTarget) {
+        scrollTarget.scrollTop = savedState.scrollTop;
+        scrollTarget.scrollLeft = savedState.scrollLeft;
       } else {
         viewer.scrollTop = savedState.scrollTop;
         viewer.scrollLeft = savedState.scrollLeft;

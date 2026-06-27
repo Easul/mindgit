@@ -2,6 +2,53 @@ function updateEditButton(label, options = {}) {
   renderFileTabs();
 }
 
+function getViewerScrollTarget(root = $('viewer')) {
+  if (!root) return null;
+  return root.querySelector('#code-viewer-scroll')
+    || root.querySelector('#viewer > pre')
+    || root.querySelector('.image-viewer')
+    || null;
+}
+
+function attachScrollableInteractionTarget(scrollTarget) {
+  if (!scrollTarget || scrollTarget._mindgitScrollTargetBound) return;
+  scrollTarget._mindgitScrollTargetBound = true;
+
+  scrollTarget.addEventListener('pointerdown', () => {
+    if (typeof focusWithoutScroll === 'function') {
+      focusWithoutScroll(scrollTarget);
+    } else {
+      scrollTarget.focus?.();
+    }
+  });
+
+  scrollTarget.addEventListener('wheel', (event) => {
+    if (event.ctrlKey) return;
+
+    const nextTop = scrollTarget.scrollTop + event.deltaY;
+    const horizontalDelta = event.deltaX + (event.shiftKey ? event.deltaY : 0);
+    const nextLeft = scrollTarget.scrollLeft + horizontalDelta;
+    const canScrollVertically = scrollTarget.scrollHeight > scrollTarget.clientHeight;
+    const canScrollHorizontally = scrollTarget.scrollWidth > scrollTarget.clientWidth;
+
+    if (!canScrollVertically && !canScrollHorizontally) return;
+
+    event.preventDefault();
+    if (canScrollVertically) {
+      scrollTarget.scrollTop = nextTop;
+    }
+    if (canScrollHorizontally) {
+      scrollTarget.scrollLeft = nextLeft;
+    }
+
+    if (typeof focusWithoutScroll === 'function') {
+      focusWithoutScroll(scrollTarget);
+    } else {
+      scrollTarget.focus?.();
+    }
+  }, { passive: false });
+}
+
 async function renderSelected() {
   if (!state.selected) return;
 
@@ -75,7 +122,8 @@ async function renderSelected() {
     }
   } else {
     const data = await api(`/api/diff?path=${encodeURIComponent(state.selected)}`);
-    $('viewer').innerHTML = `<pre>${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
+    $('viewer').innerHTML = `<pre tabindex="-1">${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
+    attachScrollableInteractionTarget(getViewerScrollTarget());
   }
   syncViewerHeight();
 }
@@ -102,7 +150,7 @@ function isLikelyBinary(path) {
 function renderImageViewer(imagePath) {
   const imageUrl = `/api/file?path=${encodeURIComponent(imagePath)}`;
   $('viewer').innerHTML = `
-    <div class="image-viewer" id="image-viewer">
+    <div class="image-viewer" id="image-viewer" tabindex="-1">
       <div class="image-controls">
         <button id="zoom-in" type="button">Zoom In</button>
         <button id="zoom-out" type="button">Zoom Out</button>
@@ -312,13 +360,14 @@ function renderFullContent(content, filename) {
     <div class="code-viewer-gutter" id="code-viewer-gutter">
       <div class="code-viewer-line-numbers" id="code-viewer-line-numbers">${lineNumbersHTML}</div>
     </div>
-    <div class="code-viewer-scroll" id="code-viewer-scroll">
+    <div class="code-viewer-scroll" id="code-viewer-scroll" tabindex="-1">
       <pre class="code-viewer-pre"><code class="code-content">${codeContentHTML}</code></pre>
     </div>
   </div>`;
 
   const scrollArea = $('code-viewer-scroll');
   const lineNumbers = $('code-viewer-line-numbers');
+  attachScrollableInteractionTarget(scrollArea);
   const syncCodeViewerGutter = () => {
     if (lineNumbers && scrollArea) {
       lineNumbers.style.transform = `translateY(${-scrollArea.scrollTop}px)`;

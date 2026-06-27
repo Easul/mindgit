@@ -1,3 +1,14 @@
+const systemThemeMediaQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+function storedThemePreference() {
+  const theme = localStorage.getItem('mindgit-theme');
+  return theme === 'dark' || theme === 'light' ? theme : null;
+}
+
+function systemThemePreference() {
+  return systemThemeMediaQuery?.matches ? 'dark' : 'light';
+}
+
 const state = {
   view: 'worktree',
   status: null,
@@ -18,7 +29,7 @@ const state = {
     mode: 'full',
   },
   content: '',
-  theme: localStorage.getItem('mindgit-theme') || 'dark',
+  theme: window.__mindgitInitialTheme || storedThemePreference() || systemThemePreference(),
   expandedGroups: new Set(),
   children: new Map(),
   history: [],
@@ -120,6 +131,20 @@ function notifySplitTheme() {
   target.postMessage({
     type: 'mindgit:theme',
     payload: { theme: state.theme },
+  }, window.location.origin);
+}
+
+function notifySplitEmbedState() {
+  if (state.embed || !state.splitPane.open) return;
+  const target = splitIframeWindow();
+  if (!target) return;
+  target.postMessage({
+    type: 'mindgit:embed-state',
+    payload: {
+      selectedPath: state.splitPane.selectedPath,
+      mode: state.splitPane.mode,
+      tabs: state.splitPane.tabs,
+    },
   }, window.location.origin);
 }
 
@@ -389,7 +414,10 @@ function toggleTheme() {
 function applyTheme(theme, options = {}) {
   state.theme = theme;
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem('mindgit-theme', theme);
+  document.documentElement.style.colorScheme = theme;
+  if (options.persist !== false) {
+    localStorage.setItem('mindgit-theme', theme);
+  }
   $('theme-toggle').textContent = theme === 'dark' ? 'Light' : 'Dark';
   const darkStyle = $('hljs-dark');
   const lightStyle = $('hljs-light');
@@ -403,6 +431,74 @@ function applyTheme(theme, options = {}) {
   if (options.notifySplit !== false) {
     notifySplitTheme();
   }
+}
+
+function currentInteractionTarget() {
+  if (state.mode === 'edit') {
+    return $('editor') || $('viewer')?.querySelector('.structured-source') || null;
+  }
+  return $('code-viewer-scroll')
+    || $('viewer')?.querySelector('pre')
+    || $('image-viewer')
+    || $('viewer')?.querySelector('.structured-source')
+    || $('viewer')?.querySelector('.mxgraph-canvas, .mindmap-canvas, .xmind-sheets')
+    || null;
+}
+
+function focusWithoutScroll(target) {
+  if (!target || typeof target.focus !== 'function') return;
+  try {
+    target.focus({ preventScroll: true });
+  } catch {
+    target.focus();
+  }
+}
+
+function focusCurrentInteractionWindow() {
+  try {
+    window.focus?.();
+  } catch {}
+}
+
+function focusSplitIframeElement() {
+  const iframe = $('split-pane-iframe');
+  if (!iframe) return;
+  focusWithoutScroll(iframe);
+  try {
+    iframe.contentWindow?.focus?.();
+  } catch {}
+}
+
+function restoreInteractionAfterResize(options = {}) {
+  focusCurrentInteractionWindow();
+  const target = currentInteractionTarget();
+  if (target) {
+    focusWithoutScroll(target);
+    requestAnimationFrame(() => focusWithoutScroll(target));
+  }
+  if (!state.embed && options.notifySplit !== false && state.splitPane.open) {
+    focusSplitIframeElement();
+    splitIframeWindow()?.postMessage({ type: 'mindgit:restore-interaction' }, window.location.origin);
+  }
+}
+
+function findInteractionTargetFromNode(startNode) {
+  if (!(startNode instanceof Element)) return null;
+  return startNode.closest('#editor, #code-viewer-scroll, #image-viewer, #viewer > pre, .structured-source, .mxgraph-canvas, .mindmap-canvas, .xmind-sheets');
+}
+
+function syncInteractionTargetFromWheel(event) {
+  const target = findInteractionTargetFromNode(event.target);
+  if (!target) return;
+  focusCurrentInteractionWindow();
+  focusWithoutScroll(target);
+}
+
+function syncInteractionTargetFromPointer(event) {
+  const target = findInteractionTargetFromNode(event.target);
+  if (!target) return;
+  focusCurrentInteractionWindow();
+  focusWithoutScroll(target);
 }
 
 async function setMode(mode) {
@@ -432,6 +528,43 @@ function splitSrc(pane) {
     ts: String(Date.now()),
   });
   return `/?${params.toString()}`;
+}
+
+async function applyEmbedState(payload = {}) {
+  if (!state.embed) return false;
+
+  const nextTabs = uniquePaths(payload.tabs);
+  const nextSelectedPath = typeof payload.selectedPath === 'string'
+    ? payload.selectedPath
+    : nextTabs[0] || '';
+  const nextMode = normalizeMode(payload.mode);
+
+  state.openTabs = nextTabs;
+
+  if (!nextSelectedPath) {
+    state.selected = null;
+    state.mode = 'full';
+    state.mobileViewerExpanded = false;
+    state.editorReady = false;
+    syncLayoutState();
+    renderFileTabs();
+    $('viewer').innerHTML = '<div class="empty">No file selected</div>';
+    return true;
+  }
+
+  if (state.selected !== nextSelectedPath) {
+    await selectFile(nextSelectedPath, { mode: nextMode, restoreState: false });
+    return true;
+  }
+
+  renderFileTabs();
+  if (state.mode !== nextMode) {
+    await setMode(nextMode);
+    return true;
+  }
+
+  saveWorkspaceState();
+  return true;
 }
 
 function cleanupSplitPaneResizeObserver() {
@@ -465,6 +598,48 @@ function observeSplitIframeViewport(iframe) {
   splitPaneResizeObserver.observe(iframe);
 }
 
+function setSplitIframeLoaded(iframe, loaded) {
+  if (!iframe) return;
+  iframe.style.visibility = loaded ? 'visible' : 'hidden';
+  iframe.dataset.loaded = loaded ? 'true' : 'false';
+  iframe.parentElement?.classList.toggle('is-loading', !loaded);
+}
+
+function ensureSplitIframe() {
+  const host = $('split-pane-host');
+  if (!host) return null;
+
+  let iframe = $('split-pane-iframe');
+  if (iframe) return iframe;
+
+  host.innerHTML = `
+    <div class="split-pane-frame is-loading" id="split-pane-frame">
+      <iframe
+        class="split-pane-iframe"
+        id="split-pane-iframe"
+        tabindex="-1"
+        title="Split Pane"
+        src="${escapeAttr(splitSrc(state.splitPane))}">
+      </iframe>
+    </div>`;
+
+  iframe = $('split-pane-iframe');
+  setSplitIframeLoaded(iframe, false);
+  observeSplitIframeViewport(iframe);
+  iframe?.addEventListener('load', () => {
+    syncSplitIframeViewport(iframe);
+    notifySplitEmbedState();
+    const content = editorContentFor(state.splitPane.selectedPath);
+    if (content !== null) {
+      broadcastEditorContent(state.splitPane.selectedPath, content);
+    }
+    notifySplitTheme();
+    setSplitIframeLoaded(iframe, true);
+    syncViewerHeight();
+  });
+  return iframe;
+}
+
 function renderSplitPane() {
   const host = $('split-pane-host');
   const area = $('viewer-split-area');
@@ -487,27 +662,14 @@ function renderSplitPane() {
 
   host.hidden = false;
   if (resizer) resizer.hidden = false;
-  host.innerHTML = `
-    <div class="split-pane-frame">
-      <iframe
-        class="split-pane-iframe"
-        id="split-pane-iframe"
-        title="Split Pane"
-        src="${escapeAttr(splitSrc(state.splitPane))}">
-      </iframe>
-    </div>`;
-
-  const iframe = $('split-pane-iframe');
-  observeSplitIframeViewport(iframe);
-  iframe?.addEventListener('load', () => {
-    syncSplitIframeViewport(iframe);
-    const content = editorContentFor(state.splitPane.selectedPath);
-    if (content !== null) {
-      broadcastEditorContent(state.splitPane.selectedPath, content);
-    }
-    notifySplitTheme();
-    syncViewerHeight();
-  });
+  const iframe = ensureSplitIframe();
+  syncSplitIframeViewport(iframe);
+  notifySplitEmbedState();
+  notifySplitTheme();
+  const content = editorContentFor(state.splitPane.selectedPath);
+  if (content !== null) {
+    broadcastEditorContent(state.splitPane.selectedPath, content);
+  }
   syncViewerHeight();
 }
 
@@ -538,8 +700,17 @@ function closeSplitPane() {
 function handleSplitPaneMessage(event) {
   if (handleThemeMessage(event)) return;
   if (handleFileContentMessage(event)) return;
-  if (state.embed || event.origin !== window.location.origin) return;
+  if (event.origin !== window.location.origin) return;
   const data = event.data || {};
+  if (data.type === 'mindgit:embed-state') {
+    applyEmbedState(data.payload);
+    return;
+  }
+  if (data.type === 'mindgit:restore-interaction') {
+    restoreInteractionAfterResize({ notifySplit: false });
+    return;
+  }
+  if (state.embed) return;
   if (data.type === 'mindgit:close-split') {
     closeSplitPane();
     return;
@@ -564,7 +735,7 @@ function handleThemeMessage(event) {
   if (data.type !== 'mindgit:theme') return false;
   const theme = data.payload?.theme;
   if (theme === 'dark' || theme === 'light') {
-    applyTheme(theme, { notifySplit: false });
+    applyTheme(theme, { notifySplit: false, persist: false });
   }
   return true;
 }
@@ -577,24 +748,38 @@ function setupResizer(id, onPointerDown) {
 
 function startResize(event, move, done, axis = 'col') {
   const target = event.currentTarget;
+  const pointerId = event.pointerId;
+  let finished = false;
   event.preventDefault();
-  target?.setPointerCapture?.(event.pointerId);
+  target?.setPointerCapture?.(pointerId);
   document.body.classList.add('is-resizing');
   document.body.classList.add(axis === 'row' ? 'is-resizing-row' : 'is-resizing-col');
 
   const finish = () => {
+    if (finished) return;
+    finished = true;
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', finish);
     window.removeEventListener('pointercancel', finish);
+    window.removeEventListener('mouseup', finish, true);
+    window.removeEventListener('blur', finish);
+    target?.removeEventListener?.('lostpointercapture', finish);
     document.body.classList.remove('is-resizing');
     document.body.classList.remove('is-resizing-row', 'is-resizing-col');
-    target?.releasePointerCapture?.(event.pointerId);
+    try {
+      target?.releasePointerCapture?.(pointerId);
+    } catch {}
+    syncViewerHeight();
+    restoreInteractionAfterResize();
     done();
   };
 
+  target?.addEventListener?.('lostpointercapture', finish);
   window.addEventListener('pointermove', move);
   window.addEventListener('pointerup', finish);
   window.addEventListener('pointercancel', finish);
+  window.addEventListener('mouseup', finish, true);
+  window.addEventListener('blur', finish);
 }
 
 function setupDesktopResizers() {
@@ -656,7 +841,7 @@ function setupDesktopResizers() {
   });
 }
 
-applyTheme(state.theme);
+applyTheme(state.theme, { persist: false });
 syncLayoutState();
 if ($('worktree-view')) $('worktree-view').addEventListener('click', () => setView('worktree'));
 if ($('history-view')) $('history-view').addEventListener('click', () => setView('history'));
@@ -675,7 +860,21 @@ if ($('search-form')) $('search-form').addEventListener('submit', (event) => {
 window.addEventListener('message', handleSplitPaneMessage);
 window.addEventListener('beforeunload', cleanupSplitPaneResizeObserver);
 window.addEventListener('resize', syncViewerHeight);
+document.addEventListener('wheel', syncInteractionTargetFromWheel, { capture: true, passive: true });
+document.addEventListener('pointerdown', syncInteractionTargetFromPointer, true);
 setupDesktopResizers();
+
+if (systemThemeMediaQuery) {
+  const syncSystemTheme = (event) => {
+    if (storedThemePreference()) return;
+    applyTheme(event.matches ? 'dark' : 'light', { persist: false });
+  };
+  if (typeof systemThemeMediaQuery.addEventListener === 'function') {
+    systemThemeMediaQuery.addEventListener('change', syncSystemTheme);
+  } else if (typeof systemThemeMediaQuery.addListener === 'function') {
+    systemThemeMediaQuery.addListener(syncSystemTheme);
+  }
+}
 
 async function bootstrap() {
   await refresh();
