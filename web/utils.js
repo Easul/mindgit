@@ -311,6 +311,43 @@ function formatDate(value) {
   return date.toLocaleString();
 }
 
+function fileStatusBaseCode(file) {
+  if (!file) return '';
+  return file.indexStatus || file.worktreeStatus || file.status || '';
+}
+
+function fileStatusLabel(file) {
+  const base = fileStatusBaseCode(file);
+  if (!base) return '';
+  return file.staged && file.unstaged ? `${base}+` : base;
+}
+
+function fileStatusClasses(file) {
+  const base = fileStatusBaseCode(file) || file?.status || '';
+  return [
+    'status',
+    base,
+    file?.staged ? 'staged' : '',
+    file?.staged && file?.unstaged ? 'mixed' : '',
+  ].filter(Boolean).join(' ');
+}
+
+function describeFileStatus(file) {
+  const base = fileStatusBaseCode(file) || file?.status || 'M';
+  const labels = {
+    A: file?.staged ? '已暂存新增' : '新增',
+    D: file?.staged ? '已暂存删除' : '删除',
+    M: file?.staged ? '已暂存修改' : '修改',
+    U: '未跟踪',
+    I: '已忽略',
+  };
+
+  if (file?.staged && file?.unstaged) {
+    return `${labels[base] || '已暂存变更'}，且有未暂存修改`;
+  }
+  return labels[base] || '修改';
+}
+
 function escapeHTML(value) {
   return String(value).replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
 }

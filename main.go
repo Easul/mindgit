@@ -33,12 +33,16 @@ type App struct {
 var webFS embed.FS
 
 type ChangedFile struct {
-	Path      string `json:"path"`
-	Status    string `json:"status"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Ignored   bool   `json:"ignored"`
-	IsDir     bool   `json:"isDir"`
+	Path           string `json:"path"`
+	Status         string `json:"status"`
+	IndexStatus    string `json:"indexStatus,omitempty"`
+	WorktreeStatus string `json:"worktreeStatus,omitempty"`
+	Staged         bool   `json:"staged,omitempty"`
+	Unstaged       bool   `json:"unstaged,omitempty"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	Ignored        bool   `json:"ignored"`
+	IsDir          bool   `json:"isDir"`
 }
 
 type StatusResponse struct {
@@ -78,6 +82,10 @@ type DeletePathRequest struct {
 	Confirm bool   `json:"confirm"`
 }
 
+type StageRequest struct {
+	Path string `json:"path"`
+}
+
 type SearchResponse struct {
 	Query   string         `json:"query"`
 	Results []SearchResult `json:"results"`
@@ -102,6 +110,7 @@ type CommitSummary struct {
 	Email     string `json:"email"`
 	Date      string `json:"date"`
 	Subject   string `json:"subject"`
+	Temporary bool   `json:"temporary,omitempty"`
 }
 
 type CommitHistoryResponse struct {
@@ -112,6 +121,8 @@ type CommitDetail struct {
 	Commit CommitSummary `json:"commit"`
 	Files  []ChangedFile `json:"files"`
 }
+
+const stagedCommitHash = "__staged__"
 
 func main() {
 	config, err := parseConfig(os.Args[1:])
@@ -131,6 +142,7 @@ func main() {
 	mux.HandleFunc("POST /api/file", app.handleSaveFile)
 	mux.HandleFunc("POST /api/fs", app.handleCreatePath)
 	mux.HandleFunc("DELETE /api/fs", app.handleDeletePath)
+	mux.HandleFunc("DELETE /api/stage", app.handleRestoreStaged)
 	mux.HandleFunc("GET /api/search", app.handleSearch)
 	mux.HandleFunc("GET /api/tree", app.handleTree)
 	mux.HandleFunc("GET /api/commits", app.handleCommits)
@@ -391,6 +403,23 @@ func (a App) handleDeletePath(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, err)
 }
 
+func (a App) handleRestoreStaged(w http.ResponseWriter, r *http.Request) {
+	var req StageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	path, err := a.cleanPath(req.Path)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	status, err := a.unstage(path)
+	writeJSON(w, status, err)
+}
+
 func (a App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
@@ -527,21 +556,52 @@ func (a App) handleCommits(w http.ResponseWriter, r *http.Request) {
 	}
 
 	commits, err := a.commits(limit)
-	writeJSON(w, CommitHistoryResponse{Commits: commits}, err)
-}
-
-func (a App) handleCommit(w http.ResponseWriter, r *http.Request) {
-	sha, err := a.cleanCommit(r.URL.Query().Get("sha"))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
+	staged, err := a.stagedCommitSummary()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if staged != nil {
+		commits = append([]CommitSummary{*staged}, commits...)
+	}
+
+	writeJSON(w, CommitHistoryResponse{Commits: commits}, nil)
+}
+
+func (a App) handleCommit(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.URL.Query().Get("sha")) == stagedCommitHash {
+		detail, err := a.stagedDetail()
+		writeJSON(w, detail, err)
+		return
+	}
+
+	sha, err := a.cleanCommit(r.URL.Query().Get("sha"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	detail, err := a.commitDetail(sha)
 	writeJSON(w, detail, err)
 }
 
 func (a App) handleCommitDiff(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.URL.Query().Get("sha")) == stagedCommitHash {
+		path, err := a.cleanPath(r.URL.Query().Get("path"))
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+
+		diff, err := a.stagedDiff(path)
+		writeJSON(w, DiffResponse{Path: path, Diff: diff}, err)
+		return
+	}
+
 	sha, err := a.cleanCommit(r.URL.Query().Get("sha"))
 	if err != nil {
 		writeJSON(w, nil, err)
@@ -640,7 +700,7 @@ func (a App) treeEntries(path string, changes []ChangedFile) ([]ChangedFile, err
 		file.Path = relPath
 		file.IsDir = entry.IsDir()
 		if file.IsDir {
-			file.Status = strongestDescendantStatus(relPath, changes)
+			file.Status, file.Staged, file.Unstaged = strongestDescendantState(relPath, changes)
 		}
 		files = append(files, file)
 		checkPaths = append(checkPaths, relPath)
@@ -694,15 +754,19 @@ func (a App) ignoredSet(paths []string) map[string]bool {
 	return ignored
 }
 
-func strongestDescendantStatus(dir string, changes []ChangedFile) string {
+func strongestDescendantState(dir string, changes []ChangedFile) (string, bool, bool) {
 	status := ""
+	staged := false
+	unstaged := false
 	for _, change := range changes {
 		if change.Ignored || !strings.HasPrefix(change.Path, dir+"/") {
 			continue
 		}
 		status = strongerStatus(status, change.Status)
+		staged = staged || change.Staged
+		unstaged = unstaged || change.Unstaged
 	}
-	return status
+	return status, staged, unstaged
 }
 
 func strongerStatus(current string, candidate string) string {
@@ -779,6 +843,71 @@ func (a App) commitFiles(sha string) ([]ChangedFile, error) {
 
 func (a App) commitDiff(sha string, path string) (string, error) {
 	return a.run("git", "show", "--format=", "--patch", sha, "--", path)
+}
+
+func (a App) stagedCommitSummary() (*CommitSummary, error) {
+	files, err := a.stagedFiles()
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, nil
+	}
+
+	return &CommitSummary{
+		Hash:      stagedCommitHash,
+		ShortHash: "INDEX",
+		Subject:   "temporary added file",
+		Author:    "staged changes",
+		Temporary: true,
+	}, nil
+}
+
+func (a App) stagedDetail() (CommitDetail, error) {
+	commit, err := a.stagedCommitSummary()
+	if err != nil {
+		return CommitDetail{}, err
+	}
+	if commit == nil {
+		return CommitDetail{}, errors.New("no staged files")
+	}
+
+	files, err := a.stagedFiles()
+	if err != nil {
+		return CommitDetail{}, err
+	}
+	return CommitDetail{Commit: *commit, Files: files}, nil
+}
+
+func (a App) stagedFiles() ([]ChangedFile, error) {
+	nameStatus, err := a.run("git", "diff", "--cached", "--name-status", "--find-renames", "--")
+	if err != nil {
+		return nil, err
+	}
+	numstat, err := a.run("git", "diff", "--cached", "--numstat", "--find-renames", "--")
+	if err != nil {
+		return nil, err
+	}
+
+	stats := parseNumstat(numstat)
+	files := parseNameStatus(nameStatus)
+	for i := range files {
+		files[i].IndexStatus = files[i].Status
+		files[i].Staged = true
+		if stat, ok := stats[files[i].Path]; ok {
+			files[i].Additions = stat[0]
+			files[i].Deletions = stat[1]
+		}
+	}
+	return files, nil
+}
+
+func (a App) stagedDiff(path string) (string, error) {
+	out, err := a.run("git", "diff", "--cached", "--", path)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 func (a App) currentBranch() (string, error) {
@@ -870,6 +999,36 @@ func (a App) hasHead() bool {
 	return err == nil
 }
 
+func (a App) unstage(path string) (StatusResponse, error) {
+	changes, err := a.changes()
+	if err != nil {
+		return StatusResponse{}, err
+	}
+
+	var target *ChangedFile
+	for i := range changes {
+		if changes[i].Path == path {
+			target = &changes[i]
+			break
+		}
+	}
+	if target == nil || !target.Staged {
+		return StatusResponse{}, fmt.Errorf("file is not staged: %s", path)
+	}
+
+	if target.IndexStatus == "A" {
+		if _, err := a.run("git", "rm", "--cached", "--quiet", "--", path); err != nil {
+			return StatusResponse{}, err
+		}
+	} else {
+		if _, err := a.run("git", "restore", "--staged", "--", path); err != nil {
+			return StatusResponse{}, err
+		}
+	}
+
+	return a.status()
+}
+
 func parseStatus(out string, stats map[string][2]int) []ChangedFile {
 	var files []ChangedFile
 	for line := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
@@ -883,8 +1042,16 @@ func parseStatus(out string, stats map[string][2]int) []ChangedFile {
 			path = parts[len(parts)-1]
 		}
 
-		status := normalizeStatus(code)
-		change := ChangedFile{Path: path, Status: status, Ignored: status == "I"}
+		indexStatus, worktreeStatus, status := normalizeStatus(code)
+		change := ChangedFile{
+			Path:           path,
+			Status:         status,
+			IndexStatus:    indexStatus,
+			WorktreeStatus: worktreeStatus,
+			Staged:         indexStatus != "",
+			Unstaged:       worktreeStatus != "",
+			Ignored:        status == "I",
+		}
 		if stat, ok := stats[path]; ok {
 			change.Additions = stat[0]
 			change.Deletions = stat[1]
@@ -957,20 +1124,46 @@ func normalizeCommitStatus(code string) string {
 	}
 }
 
-func normalizeStatus(code string) string {
-	if strings.Contains(code, "!") {
+func normalizeStatus(code string) (string, string, string) {
+	if len(code) < 2 {
+		return "", "", ""
+	}
+
+	indexStatus := normalizeStatusChar(code[0])
+	worktreeStatus := normalizeStatusChar(code[1])
+	return indexStatus, worktreeStatus, mergeStatuses(indexStatus, worktreeStatus)
+}
+
+func normalizeStatusChar(code byte) string {
+	switch code {
+	case ' ', 0:
+		return ""
+	case '!':
+		return "I"
+	case '?':
+		return "U"
+	case 'A':
+		return "A"
+	case 'D':
+		return "D"
+	case 'U':
+		return "U"
+	default:
+		return "M"
+	}
+}
+
+func mergeStatuses(indexStatus string, worktreeStatus string) string {
+	if indexStatus == "I" || worktreeStatus == "I" {
 		return "I"
 	}
-	if strings.Contains(code, "?") {
-		return "U"
-	}
-	if strings.Contains(code, "A") {
+	if indexStatus == "A" {
 		return "A"
 	}
-	if strings.Contains(code, "D") {
+	if indexStatus == "D" && worktreeStatus == "" {
 		return "D"
 	}
-	return "M"
+	return strongerStatus(indexStatus, worktreeStatus)
 }
 
 func parseSearch(out string) []SearchResult {

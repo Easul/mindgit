@@ -22,7 +22,7 @@ function renderDirectory(dir, depth) {
         <button class="group-name ${dir.ignored ? 'ignored' : ''}" type="button" data-group="${escapeAttr(dir.path)}" style="--depth: ${depth}">
           <span class="chevron ${expanded ? 'open' : ''}"></span>
           <span class="file-path">${escapeHTML(displayName(dir.path))}</span>
-          ${isTreeChange(dir) ? `<span class="status ${dir.status}"><span class="status-dot"></span></span>` : ''}
+          ${isTreeChange(dir) ? `<span class="${fileStatusClasses(dir)}"><span class="status-dot"></span></span>` : ''}
         </button>
         <button class="tree-action" type="button" data-tree-menu data-tree-kind="dir" data-tree-path="${escapeAttr(dir.path)}" title="Folder actions">...</button>
       </div>
@@ -35,7 +35,7 @@ function renderFile(file, depth) {
     <div class="tree-row">
       <button class="file ${file.path === state.selected ? 'active' : ''} ${file.ignored ? 'ignored' : ''}" title="${escapeHTML(file.path)}" data-path="${escapeAttr(file.path)}" style="--depth: ${depth}">
         <span class="file-main">
-          ${isChanged(file) ? `<span class="status ${file.status}">${file.status}</span>` : ''}
+          ${isChanged(file) ? `<span class="${fileStatusClasses(file)}">${fileStatusLabel(file)}</span>` : ''}
           <span class="file-path">${escapeHTML(displayName(file.path))}</span>
         </span>
         <span class="mini-stat">${isChanged(file) ? `+${file.additions} -${file.deletions}` : ''}</span>
@@ -58,6 +58,12 @@ function isTreeChange(entry) {
 
 async function handleTreeClick(event) {
   if (state.view === 'history') {
+    const restore = event.target.closest('[data-restore-staged-path]');
+    if (restore) {
+      event.stopPropagation();
+      await restoreStagedFile(restore.dataset.restoreStagedPath);
+      return;
+    }
     const commit = event.target.closest('[data-commit]');
     if (commit) {
       await selectCommit(commit.dataset.commit);

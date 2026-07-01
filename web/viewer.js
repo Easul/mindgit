@@ -55,7 +55,7 @@ async function renderSelected() {
   const file = state.status.files.find((item) => item.path === state.selected);
   if ($('review-summary')) {
     $('review-summary').textContent = file
-      ? `${file.path}: ${file.status}，新增 ${file.additions} 行，删除 ${file.deletions} 行。`
+      ? `${file.path}: ${describeFileStatus(file)}，新增 ${file.additions} 行，删除 ${file.deletions} 行。`
       : state.selected;
   }
 

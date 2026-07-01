@@ -109,6 +109,16 @@
       .stat strong { color: var(--text); font-weight: 650; }
       .grow { flex: 1; }
       .search { display: flex; gap: 8px; min-width: 360px; }
+      .search input {
+        transition: border-color .14s ease, box-shadow .14s ease, background-color .14s ease;
+      }
+      .search input:focus,
+      .search input:focus-visible {
+        outline: none;
+        border-color: var(--blue);
+        background: var(--input);
+        box-shadow: none;
+      }
       input {
         width: 100%;
         border: 1px solid var(--line);
@@ -290,6 +300,13 @@
       .status.D { color: var(--red); }
       .status.U { color: var(--blue); }
       .status.I { color: var(--muted); }
+      .status.staged {
+        text-decoration: underline;
+        text-decoration-style: dotted;
+        text-underline-offset: 2px;
+      }
+      .status.M.staged { color: var(--green); }
+      .status.staged.mixed { color: var(--yellow); }
 
       .file-tabs {
         display: flex;
@@ -659,7 +676,7 @@
       textarea.editor {
         resize: none;
         outline: none;
-        background: var(--surface);
+        background: transparent;
         position: absolute;
         left: 0;
         top: 0;
@@ -767,7 +784,7 @@
         margin: 0;
         border: 0;
         background: transparent;
-        color: var(--text);
+        color: transparent;
         overflow: auto;
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         line-height: 20px;
@@ -776,6 +793,16 @@
         white-space: pre;
         box-sizing: border-box;
         display: none;
+      }
+      .editor-find-match {
+        color: transparent;
+        background: color-mix(in srgb, var(--yellow) 20%, transparent);
+        border-radius: 3px;
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent);
+      }
+      .editor-find-match.current {
+        background: color-mix(in srgb, var(--blue) 26%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 70%, transparent);
       }
       .editor-highlight.wrap-enabled {
         white-space: pre-wrap;
@@ -1177,6 +1204,14 @@
       .commit-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
       .commit-meta { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
       .commit-files-title { padding: 10px 14px 4px; color: var(--muted); font-size: 12px; font-weight: 650; }
+      .history-file-row { grid-template-columns: minmax(0, 1fr) auto; }
+      .history-restore-action {
+        width: auto;
+        min-width: 72px;
+        padding: 0 10px;
+        opacity: 1;
+        font-size: 12px;
+      }
 
       footer {
         display: flex;

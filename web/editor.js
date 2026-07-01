@@ -4,6 +4,7 @@ function setupEditorShortcuts(editor) {
   const lineNumbersEl = $('editor-line-numbers');
   const lineGutterEl = $('editor-line-gutter');
   const lineHighlight = $('editor-line-highlight');
+  const highlightEl = $('editor-highlight');
   const blockSelectionOverlay = createBlockSelectionOverlay(editor);
   const commandBar = createEditorCommandBar(editor);
 
@@ -21,6 +22,7 @@ function setupEditorShortcuts(editor) {
     if (lineNumbersEl) {
       lineNumbersEl.style.transform = `translateY(${-editor.scrollTop}px)`;
     }
+    syncEditorHighlightScroll(editor, highlightEl);
   }
 
   function revealEditorRange(start, end = start) {
@@ -149,6 +151,7 @@ function setupEditorShortcuts(editor) {
 
     syncEditorChrome();
     updateCommandBarMatches(commandBar);
+    renderEditorFindHighlights(commandBar);
     if (!editor._mindgitApplyingRemote && state.selected) {
       broadcastEditorContent(state.selected, content);
     }
@@ -273,6 +276,10 @@ function setupEditorShortcuts(editor) {
 
       editor.classList.remove(removeClass);
       editor.classList.add(wrapClass);
+      if (highlightEl) {
+        highlightEl.classList.remove(removeClass);
+        highlightEl.classList.add(wrapClass);
+      }
 
       setMessage(state.wordWrap ? 'Word wrap enabled' : 'Word wrap disabled', 'ok');
       return;
@@ -348,6 +355,7 @@ function createEditorCommandBar(editor) {
   const wrapper = editor.closest('.editor-wrapper');
   const bar = document.createElement('div');
   bar.className = 'editor-command-bar';
+  bar.dataset.mode = 'find';
   bar.hidden = true;
   bar.innerHTML = `
     <input class="editor-command-find" type="text" placeholder="Find" autocomplete="off" />
@@ -416,8 +424,14 @@ function createEditorCommandBar(editor) {
     }
   });
 
-  bar.querySelector('.editor-command-prev').addEventListener('click', () => selectEditorMatch(bar, -1));
-  bar.querySelector('.editor-command-next').addEventListener('click', () => selectEditorMatch(bar, 1));
+  bar.querySelector('.editor-command-prev').addEventListener('click', () => {
+    selectEditorMatch(bar, -1);
+    focusWithoutScroll(findInput);
+  });
+  bar.querySelector('.editor-command-next').addEventListener('click', () => {
+    selectEditorMatch(bar, 1);
+    focusWithoutScroll(findInput);
+  });
   bar.querySelector('.editor-command-replace-one').addEventListener('click', () => replaceCurrentEditorMatch(bar));
   bar.querySelector('.editor-command-replace-all').addEventListener('click', () => replaceAllEditorMatches(bar));
   bar.querySelector('.editor-command-go').addEventListener('click', () => goToEditorLineFromBar(bar));
@@ -426,8 +440,10 @@ function createEditorCommandBar(editor) {
 }
 
 function showEditorCommandBar(bar, mode) {
+  bar.dataset.mode = mode;
   bar.hidden = false;
   updateCommandBarMatches(bar);
+  renderEditorFindHighlights(bar);
   const target = mode === 'line' ? bar._mindgitLineInput : bar._mindgitFindInput;
   target.focus();
   target.select();
@@ -435,6 +451,7 @@ function showEditorCommandBar(bar, mode) {
 
 function hideEditorCommandBar(bar) {
   bar.hidden = true;
+  renderEditorFindHighlights(bar);
   bar._mindgitEditor.focus();
 }
 
@@ -474,6 +491,7 @@ function selectEditorMatch(bar, direction, fromStart = false) {
   const matches = editorMatches(editor, query);
   if (!matches.length) {
     updateCommandBarMatches(bar);
+    renderEditorFindHighlights(bar);
     return false;
   }
 
@@ -498,10 +516,10 @@ function selectEditorMatch(bar, direction, fromStart = false) {
   }
 
   const match = matches[nextIndex];
-  editor.focus();
   editor.setSelectionRange(match.start, match.end);
   centerEditorSelection(editor, match.start, match.end);
   updateCommandBarMatches(bar);
+  renderEditorFindHighlights(bar);
   return true;
 }
 
@@ -564,6 +582,49 @@ function goToEditorLine(editor, lineNum) {
   editor.focus();
   editor.setSelectionRange(pos, pos);
   centerEditorSelection(editor, pos, pos, 20);
+}
+
+function syncEditorHighlightScroll(editor, highlight) {
+  if (!editor || !highlight) return;
+  highlight.scrollTop = editor.scrollTop;
+  highlight.scrollLeft = editor.scrollLeft;
+}
+
+function renderEditorFindHighlights(bar) {
+  const editor = bar?._mindgitEditor;
+  const highlight = $('editor-highlight');
+  if (!editor || !highlight) return;
+
+  if (bar.hidden) {
+    highlight.innerHTML = '';
+    highlight.style.display = 'none';
+    return;
+  }
+
+  const query = bar._mindgitFindInput.value;
+  const matches = editorMatches(editor, query);
+  if (!query || !matches.length) {
+    highlight.innerHTML = '';
+    highlight.style.display = 'none';
+    return;
+  }
+
+  let currentIndex = currentEditorMatchIndex(editor, matches);
+  if (currentIndex === -1) currentIndex = 0;
+
+  let cursor = 0;
+  let html = '';
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i];
+    html += escapeHTML(editor.value.slice(cursor, match.start));
+    html += `<mark class="editor-find-match${i === currentIndex ? ' current' : ''}">${escapeHTML(editor.value.slice(match.start, match.end) || ' ')}</mark>`;
+    cursor = match.end;
+  }
+  html += escapeHTML(editor.value.slice(cursor));
+
+  highlight.innerHTML = html || ' ';
+  highlight.style.display = 'block';
+  syncEditorHighlightScroll(editor, highlight);
 }
 
 function lineIndexAtPosition(lines, position) {
