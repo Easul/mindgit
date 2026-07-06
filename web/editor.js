@@ -8,15 +8,11 @@ function setupEditorShortcuts(editor) {
   const blockSelectionOverlay = createBlockSelectionOverlay(editor);
   const commandBar = createEditorCommandBar(editor);
 
-  let undoStack = [{
-    value: editor.value,
-    start: editor.selectionStart,
-    end: editor.selectionEnd,
-  }];
+  let blockSelection = null;
+  let undoStack = [createHistoryState()];
   let redoStack = [];
   let lastValue = editor.value;
   let isUndoRedo = false;
-  let blockSelection = null;
 
   function syncEditorChrome() {
     if (lineNumbersEl) {
@@ -37,24 +33,25 @@ function setupEditorShortcuts(editor) {
     lineHighlight.style.display = 'block';
   }
 
-  function recordHistoryState() {
-    if (editor.value === lastValue) return;
-    undoStack.push({
+  function createHistoryState() {
+    return {
       value: editor.value,
       start: editor.selectionStart,
       end: editor.selectionEnd,
-    });
+      blockSelection: cloneBlockSelection(blockSelection),
+    };
+  }
+
+  function recordHistoryState() {
+    if (editor.value === lastValue) return;
+    undoStack.push(createHistoryState());
     if (undoStack.length > 100) undoStack.shift();
     redoStack = [];
     lastValue = editor.value;
   }
 
   function resetHistoryState() {
-    undoStack = [{
-      value: editor.value,
-      start: editor.selectionStart,
-      end: editor.selectionEnd,
-    }];
+    undoStack = [createHistoryState()];
     redoStack = [];
     lastValue = editor.value;
   }
@@ -65,16 +62,13 @@ function setupEditorShortcuts(editor) {
       current &&
       current.value === editor.value &&
       current.start === editor.selectionStart &&
-      current.end === editor.selectionEnd
+      current.end === editor.selectionEnd &&
+      blockSelectionsEqual(current.blockSelection, blockSelection)
     ) {
       return;
     }
 
-    undoStack.push({
-      value: editor.value,
-      start: editor.selectionStart,
-      end: editor.selectionEnd,
-    });
+    undoStack.push(createHistoryState());
     if (undoStack.length > 100) undoStack.shift();
     redoStack = [];
   }
@@ -86,7 +80,12 @@ function setupEditorShortcuts(editor) {
     updateEditor();
     const start = historyState.start ?? historyState.cursor ?? 0;
     const end = historyState.end ?? start;
-    editor.setSelectionRange(start, end);
+    if (historyState.blockSelection) {
+      setBlockSelection(historyState.blockSelection);
+    } else {
+      clearBlockSelection();
+      editor.setSelectionRange(start, end);
+    }
     isUndoRedo = false;
   }
 
@@ -101,10 +100,38 @@ function setupEditorShortcuts(editor) {
   }
 
   function setBlockSelection(nextSelection) {
-    blockSelection = nextSelection;
-    const focusPos = getPositionFromRowCol(editor, blockSelection.focus.row, blockSelection.focus.col);
+    blockSelection = cloneBlockSelection(nextSelection);
+    const focusPoint = getBlockSelectionFocusPoint(editor, blockSelection);
+    if (!focusPoint) {
+      clearBlockSelection();
+      return;
+    }
+    const focusPos = getPositionFromRowCol(editor, focusPoint.row, focusPoint.col);
     editor.setSelectionRange(focusPos, focusPos);
     renderBlockSelection(editor, blockSelectionOverlay, blockSelection, LINE_HEIGHT);
+  }
+
+  function dispatchEditorInput(preserveBlockSelection = false) {
+    editor._mindgitPreserveBlockSelection = preserveBlockSelection;
+    editor.dispatchEvent(new Event('input'));
+    editor._mindgitPreserveBlockSelection = false;
+  }
+
+  function applyBlockSelectionResult(result) {
+    if (!result || result.value === editor.value) return false;
+    editor.value = result.value;
+    if (result.selection) {
+      setBlockSelection(result.selection);
+    } else {
+      clearBlockSelection();
+    }
+    dispatchEditorInput(Boolean(result.selection));
+    const focusPoint = result.selection ? getBlockSelectionFocusPoint(editor, blockSelection) : null;
+    if (focusPoint) {
+      const focusPos = getPositionFromRowCol(editor, focusPoint.row, focusPoint.col);
+      revealEditorRange(focusPos, focusPos);
+    }
+    return true;
   }
 
   if (lineGutterEl) {
@@ -133,7 +160,9 @@ function setupEditorShortcuts(editor) {
   });
   editor.addEventListener('input', () => {
     if (lineHighlight) lineHighlight.style.display = 'none';
-    clearBlockSelection();
+    if (!editor._mindgitPreserveBlockSelection) {
+      clearBlockSelection();
+    }
   });
   editor.addEventListener('keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
@@ -179,20 +208,58 @@ function setupEditorShortcuts(editor) {
     isUndoRedo = false;
   });
 
+  editor.addEventListener('beforeinput', (event) => {
+    if (!blockSelection || !isMultiLineBlockSelection(blockSelection) || event.isComposing) return;
+
+    if (
+      event.inputType === 'insertText' ||
+      event.inputType === 'insertReplacementText' ||
+      event.inputType === 'insertCompositionText' ||
+      event.inputType === 'insertFromComposition'
+    ) {
+      if (typeof event.data !== 'string') return;
+      event.preventDefault();
+      applyBlockSelectionResult(replaceBlockSelectionText(editor, blockSelection, event.data));
+      return;
+    }
+
+    if (event.inputType === 'insertFromPaste') {
+      const pasted = event.dataTransfer?.getData('text/plain') ?? event.data;
+      if (typeof pasted !== 'string') return;
+      event.preventDefault();
+      applyBlockSelectionResult(replaceBlockSelectionText(editor, blockSelection, pasted));
+      return;
+    }
+
+    if (event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph') {
+      event.preventDefault();
+      applyBlockSelectionResult(insertBlockSelectionNewline(editor, blockSelection));
+      return;
+    }
+
+    if (event.inputType === 'deleteContentBackward') {
+      event.preventDefault();
+      applyBlockSelectionResult(deleteBlockSelectionContent(editor, blockSelection, 'backward'));
+      return;
+    }
+
+    if (event.inputType === 'deleteContentForward') {
+      event.preventDefault();
+      applyBlockSelectionResult(deleteBlockSelectionContent(editor, blockSelection, 'forward'));
+    }
+  });
+
   editor.addEventListener('pointerdown', (event) => {
     if (!event.shiftKey || !event.altKey) return;
     event.preventDefault();
     editor.focus();
 
     const focus = getMouseRowCol(editor, event, LINE_HEIGHT);
-    const anchor = blockSelection ? blockSelection.anchor : focus;
-    setBlockSelection({ anchor, focus });
+    const anchor = blockSelection?.anchor || focus;
+    setBlockSelection(createColumnBlockSelection(anchor, focus));
 
     const move = (moveEvent) => {
-      setBlockSelection({
-        anchor,
-        focus: getMouseRowCol(editor, moveEvent, LINE_HEIGHT),
-      });
+      setBlockSelection(createColumnBlockSelection(anchor, getMouseRowCol(editor, moveEvent, LINE_HEIGHT)));
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
@@ -209,6 +276,11 @@ function setupEditorShortcuts(editor) {
     const key = e.key.toLowerCase();
     const isCtrl = e.ctrlKey && !e.altKey;
     const isModifierOnlyKey = ['control', 'shift', 'alt', 'meta'].includes(key);
+    const shouldKeepMultiSelection = blockSelection
+      && isMultiLineBlockSelection(blockSelection)
+      && !e.ctrlKey
+      && !e.altKey
+      && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Enter' || e.key === 'Process' || e.isComposing);
 
     if (blockSelection && isModifierOnlyKey) {
       renderBlockSelection(editor, blockSelectionOverlay, blockSelection, LINE_HEIGHT);
@@ -257,12 +329,12 @@ function setupEditorShortcuts(editor) {
 
     if (blockSelection && isCtrl && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
-      setBlockSelection(e.shiftKey
-        ? {
-          anchor: blockSelection.anchor,
-          focus: moveBlockFocusWithCtrl(editor, blockSelection.focus, e.key),
-        }
-        : moveBlockSelection(editor, blockSelection, e.key));
+      const nextSelection = e.shiftKey
+        ? moveBlockSelectionFocusWithCtrl(editor, blockSelection, e.key)
+        : moveBlockSelection(editor, blockSelection, e.key);
+      if (nextSelection) {
+        setBlockSelection(nextSelection);
+      }
       return;
     }
 
@@ -289,12 +361,17 @@ function setupEditorShortcuts(editor) {
       e.preventDefault();
       if (!blockSelection) {
         const cursor = getCursorPosition(editor);
-        blockSelection = { anchor: cursor, focus: cursor };
+        blockSelection = createColumnBlockSelection(cursor, cursor);
       }
-      setBlockSelection({
-        anchor: blockSelection.anchor,
-        focus: moveBlockFocus(editor, blockSelection.focus, e.key),
-      });
+      if (isMultiLineBlockSelection(blockSelection) && ['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        const nextSelection = moveBlockSelectionToLineBoundary(editor, blockSelection, e.key);
+        if (nextSelection) setBlockSelection(nextSelection);
+        return;
+      }
+      const anchor = blockSelection.anchor || getBlockSelectionFocusPoint(editor, blockSelection);
+      const focus = blockSelection.focus || getBlockSelectionFocusPoint(editor, blockSelection);
+      if (!anchor || !focus) return;
+      setBlockSelection(createColumnBlockSelection(anchor, moveBlockFocus(editor, focus, e.key)));
       return;
     }
 
@@ -307,7 +384,7 @@ function setupEditorShortcuts(editor) {
       return;
     }
 
-    if (!isModifierOnlyKey && !e.ctrlKey && (!e.shiftKey || !e.altKey)) {
+    if (!isModifierOnlyKey && !e.ctrlKey && (!e.shiftKey || !e.altKey) && !shouldKeepMultiSelection) {
       clearBlockSelection();
     }
 
@@ -851,9 +928,174 @@ function moveBlockFocus(editor, focus, key) {
   return next;
 }
 
-function moveBlockSelection(editor, selection, key) {
+function cloneBlockSelection(selection) {
+  if (!selection) return null;
+  const cloned = {};
+  if (selection.anchor) {
+    cloned.anchor = { row: selection.anchor.row, col: selection.anchor.col };
+  }
+  if (selection.focus) {
+    cloned.focus = { row: selection.focus.row, col: selection.focus.col };
+  }
+  if (Array.isArray(selection.ranges)) {
+    cloned.ranges = selection.ranges.map((range) => ({
+      row: range.row,
+      anchorCol: range.anchorCol,
+      focusCol: range.focusCol,
+    }));
+  }
+  if (typeof selection.focusIndex === 'number') {
+    cloned.focusIndex = selection.focusIndex;
+  }
+  return cloned;
+}
+
+function blockSelectionsEqual(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+
+  const pointsEqual = (left, right) => {
+    if (!left && !right) return true;
+    if (!left || !right) return false;
+    return left.row === right.row && left.col === right.col;
+  };
+
+  if (!pointsEqual(a.anchor, b.anchor) || !pointsEqual(a.focus, b.focus)) {
+    return false;
+  }
+
+  const leftRanges = Array.isArray(a.ranges) ? a.ranges : [];
+  const rightRanges = Array.isArray(b.ranges) ? b.ranges : [];
+  if (leftRanges.length !== rightRanges.length) return false;
+
+  for (let i = 0; i < leftRanges.length; i++) {
+    const left = leftRanges[i];
+    const right = rightRanges[i];
+    if (
+      left.row !== right.row ||
+      left.anchorCol !== right.anchorCol ||
+      left.focusCol !== right.focusCol
+    ) {
+      return false;
+    }
+  }
+
+  return (a.focusIndex ?? -1) === (b.focusIndex ?? -1);
+}
+
+function createColumnBlockSelection(anchor, focus) {
+  return {
+    anchor: { row: anchor.row, col: anchor.col },
+    focus: { row: focus.row, col: focus.col },
+  };
+}
+
+function getBlockSelectionRanges(editor, selection) {
+  if (!selection) return [];
+
   const lines = splitEditorLines(editor.value);
-  const { startRow, endRow, startCol } = getBlockBounds(selection);
+  const normalizeRange = (range, index) => {
+    const row = Math.max(0, Math.min(lines.length - 1, range.row));
+    const line = lines[row] || '';
+    const lineStartPos = getLineStartPositionFromLines(lines, row + 1);
+    const anchorCol = Math.max(0, range.anchorCol);
+    const focusCol = Math.max(0, range.focusCol);
+    const actualAnchorCol = Math.min(anchorCol, line.length);
+    const actualFocusCol = Math.min(focusCol, line.length);
+    return {
+      index,
+      row,
+      line,
+      lineStartPos,
+      anchorCol,
+      focusCol,
+      anchorPos: lineStartPos + actualAnchorCol,
+      focusPos: lineStartPos + actualFocusCol,
+      startCol: Math.min(actualAnchorCol, actualFocusCol),
+      endCol: Math.max(actualAnchorCol, actualFocusCol),
+      startPos: lineStartPos + Math.min(actualAnchorCol, actualFocusCol),
+      endPos: lineStartPos + Math.max(actualAnchorCol, actualFocusCol),
+    };
+  };
+
+  if (Array.isArray(selection.ranges) && selection.ranges.length) {
+    return selection.ranges
+      .map((range, index) => normalizeRange(range, index))
+      .sort((a, b) => a.row - b.row || a.index - b.index);
+  }
+
+  if (!selection.anchor || !selection.focus) return [];
+
+  const startRow = Math.min(selection.anchor.row, selection.focus.row);
+  const endRow = Math.max(selection.anchor.row, selection.focus.row);
+  const ranges = [];
+  for (let row = startRow; row <= endRow; row++) {
+    ranges.push({
+      row,
+      anchorCol: selection.anchor.col,
+      focusCol: selection.focus.col,
+    });
+  }
+  return ranges.map((range, index) => normalizeRange(range, index));
+}
+
+function getBlockSelectionFocusIndex(selection, ranges) {
+  if (!ranges.length) return -1;
+  if (Array.isArray(selection?.ranges) && typeof selection.focusIndex === 'number') {
+    return Math.max(0, Math.min(selection.focusIndex, ranges.length - 1));
+  }
+  if (selection?.focus) {
+    const index = ranges.findIndex((range) => range.row === selection.focus.row);
+    if (index !== -1) return index;
+  }
+  return Math.max(0, ranges.length - 1);
+}
+
+function getBlockSelectionFocusPoint(editor, selection) {
+  const ranges = getBlockSelectionRanges(editor, selection);
+  const focusIndex = getBlockSelectionFocusIndex(selection, ranges);
+  if (focusIndex < 0) return null;
+  const range = ranges[focusIndex];
+  return { row: range.row, col: range.focusCol };
+}
+
+function isMultiLineBlockSelection(selection) {
+  if (!selection) return false;
+  if (Array.isArray(selection.ranges)) return selection.ranges.length > 1;
+  return selection.anchor?.row !== selection.focus?.row;
+}
+
+function moveBlockSelection(editor, selection, key) {
+  if (selection?.anchor && selection?.focus && !Array.isArray(selection.ranges)) {
+    const lines = splitEditorLines(editor.value);
+    const { startRow, endRow, startCol } = getBlockBounds(editor, selection);
+    let rowDelta = 0;
+    let colDelta = 0;
+
+    if (key === 'ArrowUp' && startRow > 0) rowDelta = -1;
+    if (key === 'ArrowDown' && endRow < lines.length - 1) rowDelta = 1;
+    if (key === 'ArrowLeft' && startCol > 0) colDelta = -1;
+    if (key === 'ArrowRight') colDelta = 1;
+
+    return {
+      anchor: {
+        row: selection.anchor.row + rowDelta,
+        col: Math.max(0, selection.anchor.col + colDelta),
+      },
+      focus: {
+        row: selection.focus.row + rowDelta,
+        col: Math.max(0, selection.focus.col + colDelta),
+      },
+    };
+  }
+
+  const lines = splitEditorLines(editor.value);
+  const ranges = getBlockSelectionRanges(editor, selection);
+  if (!ranges.length) return cloneBlockSelection(selection);
+
+  const startRow = Math.min(...ranges.map((range) => range.row));
+  const endRow = Math.max(...ranges.map((range) => range.row));
+  const startCol = Math.min(...ranges.map((range) => Math.min(range.anchorCol, range.focusCol)));
   let rowDelta = 0;
   let colDelta = 0;
 
@@ -863,29 +1105,45 @@ function moveBlockSelection(editor, selection, key) {
   if (key === 'ArrowRight') colDelta = 1;
 
   return {
-    anchor: {
-      row: selection.anchor.row + rowDelta,
-      col: Math.max(0, selection.anchor.col + colDelta),
-    },
-    focus: {
-      row: selection.focus.row + rowDelta,
-      col: Math.max(0, selection.focus.col + colDelta),
-    },
+    ranges: ranges.map((range) => ({
+      row: range.row + rowDelta,
+      anchorCol: Math.max(0, range.anchorCol + colDelta),
+      focusCol: Math.max(0, range.focusCol + colDelta),
+    })),
+    focusIndex: getBlockSelectionFocusIndex(selection, ranges),
   };
 }
 
-function moveBlockFocusWithCtrl(editor, focus, key) {
-  if (key === 'ArrowUp' || key === 'ArrowDown') {
-    return moveBlockFocus(editor, focus, key);
+function moveBlockSelectionFocusWithCtrl(editor, selection, key) {
+  if (selection?.anchor && selection?.focus && !Array.isArray(selection.ranges)) {
+    if (key === 'ArrowUp' || key === 'ArrowDown') {
+      return createColumnBlockSelection(selection.anchor, moveBlockFocus(editor, selection.focus, key));
+    }
+
+    const lines = splitEditorLines(editor.value);
+    const line = lines[selection.focus.row] || '';
+    return createColumnBlockSelection(selection.anchor, {
+      row: selection.focus.row,
+      col: key === 'ArrowLeft'
+        ? getPreviousWordBoundary(line, selection.focus.col)
+        : getNextWordBoundary(line, selection.focus.col),
+      });
   }
 
-  const lines = splitEditorLines(editor.value);
-  const line = lines[focus.row] || '';
+  if (key === 'ArrowUp' || key === 'ArrowDown') {
+    return moveBlockSelection(editor, selection, key);
+  }
+
+  const ranges = getBlockSelectionRanges(editor, selection);
   return {
-    row: focus.row,
-    col: key === 'ArrowLeft'
-      ? getPreviousWordBoundary(line, focus.col)
-      : getNextWordBoundary(line, focus.col),
+    ranges: ranges.map((range) => ({
+      row: range.row,
+      anchorCol: range.anchorCol,
+      focusCol: key === 'ArrowLeft'
+        ? getPreviousWordBoundary(range.line, range.focusCol)
+        : getNextWordBoundary(range.line, range.focusCol),
+    })),
+    focusIndex: getBlockSelectionFocusIndex(selection, ranges),
   };
 }
 
@@ -919,11 +1177,38 @@ function getNextWordBoundary(line, col) {
   return Math.min(line.length, index + 1);
 }
 
-function getBlockBounds(selection) {
-  const startRow = Math.min(selection.anchor.row, selection.focus.row);
-  const endRow = Math.max(selection.anchor.row, selection.focus.row);
-  const startCol = Math.min(selection.anchor.col, selection.focus.col);
-  const endCol = Math.max(selection.anchor.col, selection.focus.col);
+function moveBlockSelectionToLineBoundary(editor, selection, key) {
+  const ranges = getBlockSelectionRanges(editor, selection);
+  if (!ranges.length) return null;
+
+  const nextRanges = ranges.map((range) => ({
+    row: range.row,
+    anchorCol: range.anchorCol,
+    focusCol: key === 'ArrowLeft' ? 0 : range.line.length,
+  }));
+  const changed = nextRanges.some((range, index) => range.focusCol !== ranges[index].focusCol);
+  if (!changed) return null;
+
+  return {
+    ranges: nextRanges,
+    focusIndex: getBlockSelectionFocusIndex(selection, ranges),
+  };
+}
+
+function getBlockBounds(editor, selection) {
+  const ranges = getBlockSelectionRanges(editor, selection);
+  if (!ranges.length) {
+    return {
+      startRow: 0,
+      endRow: 0,
+      startCol: 0,
+      endCol: 0,
+    };
+  }
+  const startRow = Math.min(...ranges.map((range) => range.row));
+  const endRow = Math.max(...ranges.map((range) => range.row));
+  const startCol = Math.min(...ranges.map((range) => range.startCol));
+  const endCol = Math.max(...ranges.map((range) => range.endCol));
   return { startRow, endRow, startCol, endCol };
 }
 
@@ -932,19 +1217,20 @@ function renderBlockSelection(editor, overlay, selection, lineHeight) {
   overlay.innerHTML = '';
   if (!selection) return;
 
-  const { startRow, endRow, startCol, endCol } = getBlockBounds(selection);
+  const ranges = getBlockSelectionRanges(editor, selection);
+  if (!ranges.length) return;
   const style = getComputedStyle(editor);
   const paddingLeft = parseFloat(style.paddingLeft) || 0;
   const paddingTop = parseFloat(style.paddingTop) || 0;
   const charWidth = getEditorCharWidth(editor);
-  const width = Math.max(2, (endCol - startCol) * charWidth);
-  const left = paddingLeft + (startCol * charWidth) - editor.scrollLeft;
 
-  for (let row = startRow; row <= endRow; row++) {
+  for (const range of ranges) {
     const rect = document.createElement('div');
+    const width = Math.max(2, (range.endCol - range.startCol) * charWidth);
+    const left = paddingLeft + (range.startCol * charWidth) - editor.scrollLeft;
     rect.className = 'editor-block-selection-rect';
     rect.style.left = `${left}px`;
-    rect.style.top = `${paddingTop + (row * lineHeight) - editor.scrollTop}px`;
+    rect.style.top = `${paddingTop + (range.row * lineHeight) - editor.scrollTop}px`;
     rect.style.width = `${width}px`;
     rect.style.height = `${lineHeight}px`;
     overlay.appendChild(rect);
@@ -952,18 +1238,120 @@ function renderBlockSelection(editor, overlay, selection, lineHeight) {
 }
 
 function getBlockText(editor, selection) {
-  const lines = splitEditorLines(editor.value);
-  const { startRow, endRow, startCol, endCol } = getBlockBounds(selection);
-  const selected = [];
+  return getBlockSelectionRanges(editor, selection)
+    .map((range) => editor.value.slice(range.startPos, range.endPos))
+    .join('\n');
+}
 
-  for (let row = startRow; row <= endRow; row++) {
-    const line = lines[row] || '';
-    const from = Math.min(startCol, line.length);
-    const to = Math.min(endCol, line.length);
-    selected.push(line.slice(from, to));
+function createCollapsedSelectionFromPositions(text, positions, focusIndex) {
+  const lines = splitEditorLines(text);
+  return {
+    ranges: positions.map((position) => {
+      const point = findLineAndColumnAtPosition(lines, position);
+      return {
+        row: point.lineIndex,
+        anchorCol: point.column,
+        focusCol: point.column,
+      };
+    }),
+    focusIndex: Math.max(0, Math.min(focusIndex, Math.max(positions.length - 1, 0))),
+  };
+}
+
+function applyBlockSelectionEdits(editor, selection, buildEdit) {
+  const text = editor.value;
+  const ranges = getBlockSelectionRanges(editor, selection);
+  if (!ranges.length) return null;
+
+  const focusIndex = getBlockSelectionFocusIndex(selection, ranges);
+  const caretPositions = [];
+  let cursor = 0;
+  let changed = false;
+  let nextValue = '';
+
+  for (const range of ranges) {
+    const edit = buildEdit(range);
+    if (!edit) {
+      nextValue += text.slice(cursor, range.startPos);
+      cursor = range.startPos;
+      caretPositions.push(nextValue.length);
+      continue;
+    }
+
+    const start = Math.max(0, Math.min(text.length, edit.start ?? range.startPos));
+    const end = Math.max(start, Math.min(text.length, edit.end ?? range.endPos));
+    const replacement = edit.replacement ?? '';
+    const caretOffset = edit.caretOffset ?? replacement.length;
+
+    if (start < cursor) return null;
+
+    nextValue += text.slice(cursor, start) + replacement;
+    cursor = end;
+    caretPositions.push((nextValue.length - replacement.length) + caretOffset);
+    if (start !== end || replacement !== text.slice(start, end)) {
+      changed = true;
+    }
   }
 
-  return selected.join('\n');
+  nextValue += text.slice(cursor);
+  if (!changed) return null;
+
+  return {
+    value: nextValue,
+    selection: createCollapsedSelectionFromPositions(nextValue, caretPositions, focusIndex),
+  };
+}
+
+function replaceBlockSelectionText(editor, selection, text) {
+  return applyBlockSelectionEdits(editor, selection, (range) => ({
+    start: range.startPos,
+    end: range.endPos,
+    replacement: text,
+    caretOffset: text.length,
+  }));
+}
+
+function insertBlockSelectionNewline(editor, selection) {
+  return applyBlockSelectionEdits(editor, selection, (range) => {
+    const insertText = `\n${leadingIndent(range.line)}`;
+    return {
+      start: range.startPos,
+      end: range.endPos,
+      replacement: insertText,
+      caretOffset: insertText.length,
+    };
+  });
+}
+
+function deleteBlockSelectionContent(editor, selection, direction) {
+  return applyBlockSelectionEdits(editor, selection, (range) => {
+    if (range.startPos !== range.endPos) {
+      return {
+        start: range.startPos,
+        end: range.endPos,
+        replacement: '',
+        caretOffset: 0,
+      };
+    }
+
+    if (direction === 'backward') {
+      if (range.startPos === 0) return null;
+      return {
+        start: range.startPos - 1,
+        end: range.startPos,
+        replacement: '',
+        caretOffset: 0,
+      };
+    }
+
+    if (range.startPos >= editor.value.length) return null;
+    return {
+      start: range.startPos,
+      end: range.startPos + 1,
+      replacement: '',
+      caretOffset: 0,
+    };
+  });
 }
 
 function writeClipboard(text) {
@@ -1011,26 +1399,23 @@ function copyBlockSelection(editor, selection) {
 }
 
 function cutBlockSelection(editor, selection) {
-  const lines = splitEditorLines(editor.value);
-  const { startRow, endRow, startCol, endCol } = getBlockBounds(selection);
   const text = getBlockText(editor, selection);
-  let changed = false;
+  const result = applyBlockSelectionEdits(editor, selection, (range) => {
+    if (range.startPos === range.endPos) return null;
+    return {
+      start: range.startPos,
+      end: range.endPos,
+      replacement: '',
+      caretOffset: 0,
+    };
+  });
 
-  if (startCol === endCol) return false;
-
-  for (let row = startRow; row <= endRow; row++) {
-    const line = lines[row] || '';
-    const from = Math.min(startCol, line.length);
-    const to = Math.min(endCol, line.length);
-    if (to <= from) continue;
-    lines[row] = line.slice(0, from) + line.slice(to);
-    changed = true;
-  }
-
-  if (!changed) return false;
+  if (!result) return false;
   writeClipboard(text);
-  editor.value = lines.join('\n');
-  const cursor = getPositionFromRowCol(editor, startRow, startCol);
+  editor.value = result.value;
+  const focusPoint = getBlockSelectionFocusPoint(editor, result.selection);
+  if (!focusPoint) return false;
+  const cursor = getPositionFromRowCol(editor, focusPoint.row, focusPoint.col);
   editor.setSelectionRange(cursor, cursor);
   return true;
 }
