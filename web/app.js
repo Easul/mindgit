@@ -55,6 +55,7 @@ const layoutStorageKey = 'mindgit-layout-v1';
 const workspaceStorageKey = 'mindgit-workspace-v2';
 const legacyWorkspaceStorageKey = 'mindgit-workspace-v1';
 let splitPaneResizeObserver = null;
+let projectSwitcherSyncFrame = 0;
 
 function normalizeMode(mode) {
   return ['diff', 'full', 'edit'].includes(mode) ? mode : 'full';
@@ -324,19 +325,61 @@ function currentProject() {
   return state.projectsByKey.get(state.currentProjectKey) || null;
 }
 
+function syncProjectSwitcherLabel() {
+  projectSwitcherSyncFrame = 0;
+  const button = $('project-switcher');
+  const label = $('project-switcher-label');
+  if (!button || !label || button.hidden) return;
+
+  const fullLabel = button.dataset.fullLabel || '';
+  label.textContent = fullLabel;
+  if (!fullLabel) return;
+
+  const availableWidth = label.clientWidth;
+  if (!availableWidth || label.scrollWidth <= availableWidth) return;
+
+  const suffix = '..';
+  let best = suffix;
+  let low = 0;
+  let high = fullLabel.length;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = `${fullLabel.slice(0, mid)}${suffix}`;
+    label.textContent = candidate;
+    if (label.scrollWidth <= availableWidth) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  label.textContent = best;
+}
+
+function scheduleProjectSwitcherLabelSync() {
+  if (projectSwitcherSyncFrame) cancelAnimationFrame(projectSwitcherSyncFrame);
+  projectSwitcherSyncFrame = requestAnimationFrame(syncProjectSwitcherLabel);
+}
+
 function updateProjectSwitcher() {
   const button = $('project-switcher');
   if (!button) return;
   const project = currentProject();
   const visible = !state.embed && state.projects.length > 1 && project;
   button.hidden = !visible;
+  button.dataset.fullLabel = project?.name || '';
   if (!project) {
-    button.textContent = '';
+    const label = $('project-switcher-label');
+    if (label) label.textContent = '';
     button.title = '';
     return;
   }
-  button.textContent = project.name;
+  const label = $('project-switcher-label');
+  if (label) label.textContent = project.name;
   button.title = project.root;
+  scheduleProjectSwitcherLabelSync();
 }
 
 async function loadProjects() {
@@ -1036,6 +1079,7 @@ if ($('search-form')) $('search-form').addEventListener('submit', (event) => {
 window.addEventListener('message', handleSplitPaneMessage);
 window.addEventListener('beforeunload', cleanupSplitPaneResizeObserver);
 window.addEventListener('resize', syncViewerHeight);
+window.addEventListener('resize', scheduleProjectSwitcherLabelSync);
 document.addEventListener('wheel', syncInteractionTargetFromWheel, { capture: true, passive: true });
 document.addEventListener('pointerdown', syncInteractionTargetFromPointer, true);
 setupDesktopResizers();
