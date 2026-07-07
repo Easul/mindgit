@@ -20,13 +20,38 @@ import (
 )
 
 type Config struct {
-	root string
-	host string
-	port int
+	roots []string
+	host  string
+	port  int
 }
 
 type App struct {
-	root string
+	root           string
+	projects       []ProjectSummary
+	projectByKey   map[string]ProjectSummary
+	defaultProject string
+}
+
+type multiStringFlag []string
+
+func (m *multiStringFlag) String() string {
+	return strings.Join(*m, ", ")
+}
+
+func (m *multiStringFlag) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
+type ProjectSummary struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+	Root string `json:"root"`
+}
+
+type ProjectsResponse struct {
+	Projects       []ProjectSummary `json:"projects"`
+	DefaultProject string           `json:"defaultProject"`
 }
 
 //go:embed web/*
@@ -46,15 +71,16 @@ type ChangedFile struct {
 }
 
 type StatusResponse struct {
-	Root      string        `json:"root"`
-	Branch    string        `json:"branch"`
-	Files     []ChangedFile `json:"files"`
-	Modified  int           `json:"modified"`
-	Added     int           `json:"added"`
-	Deleted   int           `json:"deleted"`
-	Untracked int           `json:"untracked"`
-	Additions int           `json:"additions"`
-	Deletions int           `json:"deletions"`
+	Project   ProjectSummary `json:"project"`
+	Root      string         `json:"root"`
+	Branch    string         `json:"branch"`
+	Files     []ChangedFile  `json:"files"`
+	Modified  int            `json:"modified"`
+	Added     int            `json:"added"`
+	Deleted   int            `json:"deleted"`
+	Untracked int            `json:"untracked"`
+	Additions int            `json:"additions"`
+	Deletions int            `json:"deletions"`
 }
 
 type DiffResponse struct {
@@ -129,12 +155,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if config.root == "" {
+	if len(config.roots) == 0 {
 		return
 	}
-
-	app := App{root: config.root}
+	projects := buildProjects(config.roots)
+	app := App{
+		root:           config.roots[0],
+		projects:       projects,
+		projectByKey:   projectMap(projects),
+		defaultProject: projects[0].Key,
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/projects", app.handleProjects)
 	mux.HandleFunc("GET /api/status", app.handleStatus)
 	mux.HandleFunc("GET /api/diff", app.handleDiff)
 	mux.HandleFunc("GET /api/file", app.handleReadFile)
@@ -151,7 +183,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.FS(staticFiles())))
 
 	addr := net.JoinHostPort(config.host, strconv.Itoa(config.port))
-	log.Printf("MindGit serving %s at http://%s", config.root, addr)
+	log.Printf("MindGit serving %d project(s) at http://%s", len(config.roots), addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
@@ -166,16 +198,17 @@ func parseConfig(args []string) (Config, error) {
 		return Config{}, err
 	}
 
-	config := Config{root: defaultRoot, host: "127.0.0.1", port: 8787}
+	config := Config{host: "127.0.0.1", port: 8787}
 	flags := flag.NewFlagSet("mindgit", flag.ContinueOnError)
 	flags.SetOutput(os.Stdout)
 	flags.Usage = printUsage
 
 	var help bool
+	var dirs multiStringFlag
 	flags.BoolVar(&help, "h", false, "show help")
 	flags.BoolVar(&help, "help", false, "show help")
-	flags.StringVar(&config.root, "d", config.root, "project directory")
-	flags.StringVar(&config.root, "dir", config.root, "project directory")
+	flags.Var(&dirs, "d", "project directory")
+	flags.Var(&dirs, "dir", "project directory")
 	flags.StringVar(&config.host, "b", config.host, "bind address, for example 127.0.0.1 or 0.0.0.0")
 	flags.StringVar(&config.host, "bind", config.host, "bind address, for example 127.0.0.1 or 0.0.0.0")
 	flags.IntVar(&config.port, "p", config.port, "server port")
@@ -195,18 +228,30 @@ func parseConfig(args []string) (Config, error) {
 		return Config{}, fmt.Errorf("port must be between 1 and 65535")
 	}
 
-	root, err := filepath.Abs(config.root)
-	if err != nil {
-		return Config{}, err
+	if len(dirs) == 0 {
+		dirs = append(dirs, defaultRoot)
 	}
-	info, err := os.Stat(root)
-	if err != nil {
-		return Config{}, err
+
+	seen := map[string]bool{}
+	config.roots = make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		root, err := filepath.Abs(dir)
+		if err != nil {
+			return Config{}, err
+		}
+		info, err := os.Stat(root)
+		if err != nil {
+			return Config{}, err
+		}
+		if !info.IsDir() {
+			return Config{}, fmt.Errorf("project directory is not a directory: %s", root)
+		}
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		config.roots = append(config.roots, root)
 	}
-	if !info.IsDir() {
-		return Config{}, fmt.Errorf("project directory is not a directory: %s", root)
-	}
-	config.root = root
 	return config, nil
 }
 
@@ -218,10 +263,34 @@ Usage:
   mindgit help
 
 Options:
-  -d, --dir <path>      Project directory to inspect. Default: current directory
+  -d, --dir <path>      Project directory to inspect. Repeat to open multiple projects. Default: current directory
   -b, --bind <addr>     Bind address: 127.0.0.1 or 0.0.0.0. Default: 127.0.0.1
   -p, --port <port>     HTTP port. Default: 8787
   -h, --help            Show this help`)
+}
+
+func buildProjects(roots []string) []ProjectSummary {
+	projects := make([]ProjectSummary, 0, len(roots))
+	for _, root := range roots {
+		name := filepath.Base(root)
+		if name == "." || name == string(filepath.Separator) || name == "" {
+			name = root
+		}
+		projects = append(projects, ProjectSummary{
+			Key:  root,
+			Name: name,
+			Root: root,
+		})
+	}
+	return projects
+}
+
+func projectMap(projects []ProjectSummary) map[string]ProjectSummary {
+	byKey := make(map[string]ProjectSummary, len(projects))
+	for _, project := range projects {
+		byKey[project.Key] = project
+	}
+	return byKey
 }
 
 func staticFiles() fs.FS {
@@ -232,30 +301,81 @@ func staticFiles() fs.FS {
 	return sub
 }
 
+func (a App) handleProjects(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, ProjectsResponse{
+		Projects:       a.projects,
+		DefaultProject: a.defaultProject,
+	}, nil)
+}
+
+func (a App) appForRequest(r *http.Request) (App, error) {
+	key := strings.TrimSpace(r.URL.Query().Get("project"))
+	if key == "" {
+		key = a.defaultProject
+	}
+	project, ok := a.projectByKey[key]
+	if !ok {
+		return App{}, fmt.Errorf("unknown project: %s", key)
+	}
+
+	return App{
+		root:           project.Root,
+		projects:       a.projects,
+		projectByKey:   a.projectByKey,
+		defaultProject: project.Key,
+	}, nil
+}
+
+func (a App) currentProject() ProjectSummary {
+	if project, ok := a.projectByKey[a.defaultProject]; ok {
+		return project
+	}
+	return ProjectSummary{
+		Key:  a.root,
+		Name: filepath.Base(a.root),
+		Root: a.root,
+	}
+}
+
 func (a App) handleStatus(w http.ResponseWriter, r *http.Request) {
-	status, err := a.status()
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	status, err := app.status()
 	writeJSON(w, status, err)
 }
 
 func (a App) handleDiff(w http.ResponseWriter, r *http.Request) {
-	path, err := a.cleanPath(r.URL.Query().Get("path"))
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	path, err := app.cleanPath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	diff, err := a.diff(path)
+	diff, err := app.diff(path)
 	writeJSON(w, DiffResponse{Path: path, Diff: diff}, err)
 }
 
 func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
-	path, err := a.cleanPath(r.URL.Query().Get("path"))
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	path, err := app.cleanPath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	fullPath := filepath.Join(a.root, path)
+	fullPath := filepath.Join(app.root, path)
 	content, err := os.ReadFile(fullPath)
 	if err != nil {
 		writeJSON(w, nil, err)
@@ -287,36 +407,46 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	var req SaveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	path, err := a.cleanPath(req.Path)
+	path, err := app.cleanPath(req.Path)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	fullPath := filepath.Join(a.root, path)
+	fullPath := filepath.Join(app.root, path)
 	if err := os.WriteFile(fullPath, []byte(req.Content), 0o644); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	status, err := a.status()
+	status, err := app.status()
 	writeJSON(w, status, err)
 }
 
 func (a App) handleCreatePath(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	var req CreatePathRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	path, err := a.cleanPath(req.Path)
+	path, err := app.cleanPath(req.Path)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -326,7 +456,7 @@ func (a App) handleCreatePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath := filepath.Join(a.root, path)
+	fullPath := filepath.Join(app.root, path)
 	if _, err := os.Stat(fullPath); err == nil {
 		writeJSON(w, nil, fmt.Errorf("path already exists: %s", path))
 		return
@@ -360,11 +490,16 @@ func (a App) handleCreatePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := a.status()
+	status, err := app.status()
 	writeJSON(w, status, err)
 }
 
 func (a App) handleDeletePath(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	var req DeletePathRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, nil, err)
@@ -375,7 +510,7 @@ func (a App) handleDeletePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := a.cleanPath(req.Path)
+	path, err := app.cleanPath(req.Path)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -385,7 +520,7 @@ func (a App) handleDeletePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath := filepath.Join(a.root, path)
+	fullPath := filepath.Join(app.root, path)
 	if _, err := os.Stat(fullPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			writeJSON(w, nil, fmt.Errorf("path does not exist: %s", path))
@@ -399,35 +534,45 @@ func (a App) handleDeletePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := a.status()
+	status, err := app.status()
 	writeJSON(w, status, err)
 }
 
 func (a App) handleRestoreStaged(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	var req StageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	path, err := a.cleanPath(req.Path)
+	path, err := app.cleanPath(req.Path)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	status, err := a.unstage(path)
+	status, err := app.unstage(path)
 	writeJSON(w, status, err)
 }
 
 func (a App) handleSearch(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
 		writeJSON(w, SearchResponse{}, nil)
 		return
 	}
 
-	results, err := a.search(query)
+	results, err := app.search(query)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -528,23 +673,33 @@ func isBinary(content []byte) bool {
 }
 
 func (a App) handleTree(w http.ResponseWriter, r *http.Request) {
-	path, err := a.cleanOptionalPath(r.URL.Query().Get("path"))
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	path, err := app.cleanOptionalPath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	changes, err := a.changes()
+	changes, err := app.changes()
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	files, err := a.treeEntries(path, changes)
+	files, err := app.treeEntries(path, changes)
 	writeJSON(w, TreeResponse{Path: path, Files: files}, err)
 }
 
 func (a App) handleCommits(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	limit := 50
 	if input := strings.TrimSpace(r.URL.Query().Get("limit")); input != "" {
 		parsed, err := strconv.Atoi(input)
@@ -555,13 +710,13 @@ func (a App) handleCommits(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	commits, err := a.commits(limit)
+	commits, err := app.commits(limit)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	staged, err := a.stagedCommitSummary()
+	staged, err := app.stagedCommitSummary()
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -574,46 +729,56 @@ func (a App) handleCommits(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a App) handleCommit(w http.ResponseWriter, r *http.Request) {
-	if strings.TrimSpace(r.URL.Query().Get("sha")) == stagedCommitHash {
-		detail, err := a.stagedDetail()
-		writeJSON(w, detail, err)
-		return
-	}
-
-	sha, err := a.cleanCommit(r.URL.Query().Get("sha"))
+	app, err := a.appForRequest(r)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
-	detail, err := a.commitDetail(sha)
+	if strings.TrimSpace(r.URL.Query().Get("sha")) == stagedCommitHash {
+		detail, err := app.stagedDetail()
+		writeJSON(w, detail, err)
+		return
+	}
+
+	sha, err := app.cleanCommit(r.URL.Query().Get("sha"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	detail, err := app.commitDetail(sha)
 	writeJSON(w, detail, err)
 }
 
 func (a App) handleCommitDiff(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	if strings.TrimSpace(r.URL.Query().Get("sha")) == stagedCommitHash {
-		path, err := a.cleanPath(r.URL.Query().Get("path"))
+		path, err := app.cleanPath(r.URL.Query().Get("path"))
 		if err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
 
-		diff, err := a.stagedDiff(path)
+		diff, err := app.stagedDiff(path)
 		writeJSON(w, DiffResponse{Path: path, Diff: diff}, err)
 		return
 	}
 
-	sha, err := a.cleanCommit(r.URL.Query().Get("sha"))
+	sha, err := app.cleanCommit(r.URL.Query().Get("sha"))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
-	path, err := a.cleanPath(r.URL.Query().Get("path"))
+	path, err := app.cleanPath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	diff, err := a.commitDiff(sha, path)
+	diff, err := app.commitDiff(sha, path)
 	writeJSON(w, DiffResponse{Path: path, Diff: diff}, err)
 }
 
@@ -633,7 +798,7 @@ func (a App) status() (StatusResponse, error) {
 		return StatusResponse{}, err
 	}
 
-	response := StatusResponse{Root: a.root, Branch: branch, Files: rootFiles}
+	response := StatusResponse{Project: a.currentProject(), Root: a.root, Branch: branch, Files: rootFiles}
 	for _, file := range files {
 		if file.Ignored || file.Status == "" {
 			continue

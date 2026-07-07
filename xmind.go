@@ -17,7 +17,12 @@ type XMindResponse struct {
 }
 
 func (a App) handleXMindFile(w http.ResponseWriter, r *http.Request) {
-	path, err := a.cleanPath(r.URL.Query().Get("path"))
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	path, err := app.cleanPath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -27,7 +32,7 @@ func (a App) handleXMindFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := os.ReadFile(filepath.Join(a.root, path))
+	content, err := os.ReadFile(filepath.Join(app.root, path))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return

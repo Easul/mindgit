@@ -9,14 +9,22 @@ function systemThemePreference() {
   return systemThemeMediaQuery?.matches ? 'dark' : 'light';
 }
 
+const initialParams = new URLSearchParams(window.location.search);
+
 const state = {
   view: 'worktree',
   status: null,
   selected: null,
   mode: 'full',
-  embed: new URLSearchParams(window.location.search).get('embed') === '1',
-  initialPath: new URLSearchParams(window.location.search).get('path') || '',
-  initialMode: new URLSearchParams(window.location.search).get('mode') || '',
+  embed: initialParams.get('embed') === '1',
+  initialPath: initialParams.get('path') || '',
+  initialMode: initialParams.get('mode') || '',
+  initialProjectKey: initialParams.get('project') || '',
+  projects: [],
+  projectsByKey: new Map(),
+  currentProjectKey: '',
+  workspace: { activeProjectKey: '', projects: {} },
+  migratedLegacyWorkspace: false,
   mobileViewerExpanded: false,
   editorReady: false,
   saveInProgress: false,
@@ -44,7 +52,8 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 const layoutStorageKey = 'mindgit-layout-v1';
-const workspaceStorageKey = 'mindgit-workspace-v1';
+const workspaceStorageKey = 'mindgit-workspace-v2';
+const legacyWorkspaceStorageKey = 'mindgit-workspace-v1';
 let splitPaneResizeObserver = null;
 
 function normalizeMode(mode) {
@@ -56,60 +65,143 @@ function uniquePaths(paths) {
   return [...new Set(paths.filter((path) => typeof path === 'string' && path.trim()))];
 }
 
-function loadWorkspaceState() {
-  if (state.embed) return null;
+function normalizeProjectWorkspace(parsed = {}) {
+  const splitPane = parsed.splitPane || {};
+  const selectedPath = typeof splitPane.selectedPath === 'string'
+    ? splitPane.selectedPath
+    : typeof splitPane.path === 'string'
+      ? splitPane.path
+      : '';
+  const openTabs = uniquePaths([...(parsed.openTabs || []), parsed.selected]);
+  const splitTabs = uniquePaths([...(splitPane.tabs || []), selectedPath]);
+  const selectedCommitHash = typeof parsed.selectedCommitHash === 'string'
+    ? parsed.selectedCommitHash
+    : typeof parsed.selectedCommit?.hash === 'string'
+      ? parsed.selectedCommit.hash
+      : null;
+  return {
+    view: parsed.view === 'history' ? 'history' : 'worktree',
+    selected: typeof parsed.selected === 'string' ? parsed.selected : null,
+    mode: normalizeMode(parsed.mode),
+    mobileViewerExpanded: Boolean(parsed.mobileViewerExpanded),
+    openTabs,
+    tabStates: parsed.tabStates && typeof parsed.tabStates === 'object' ? parsed.tabStates : {},
+    expandedGroups: uniquePaths(parsed.expandedGroups || []),
+    splitPane: {
+      open: Boolean(splitPane.open && selectedPath),
+      orientation: splitPane.orientation === 'down' ? 'down' : 'right',
+      tabs: splitTabs,
+      selectedPath,
+      mode: normalizeMode(splitPane.mode),
+    },
+    selectedCommitHash,
+    selectedCommitFile: typeof parsed.selectedCommitFile === 'string' ? parsed.selectedCommitFile : null,
+  };
+}
+
+function defaultProjectWorkspace() {
+  return normalizeProjectWorkspace();
+}
+
+function loadStoredWorkspaceBundle() {
+  if (state.embed) {
+    return { activeProjectKey: '', projects: {} };
+  }
+
   try {
     const raw = localStorage.getItem(workspaceStorageKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    const splitPane = parsed.splitPane || {};
-    const selectedPath = typeof splitPane.selectedPath === 'string'
-      ? splitPane.selectedPath
-      : typeof splitPane.path === 'string'
-        ? splitPane.path
-        : '';
-    const splitTabs = uniquePaths([...(splitPane.tabs || []), selectedPath]);
-    const openTabs = uniquePaths([...(parsed.openTabs || []), parsed.selected]);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const projects = {};
+      const storedProjects = parsed.projects && typeof parsed.projects === 'object' ? parsed.projects : {};
+      for (const [key, value] of Object.entries(storedProjects)) {
+        projects[key] = normalizeProjectWorkspace(value);
+      }
+      return {
+        activeProjectKey: typeof parsed.activeProjectKey === 'string' ? parsed.activeProjectKey : '',
+        projects,
+      };
+    }
+  } catch {}
+
+  try {
+    const raw = localStorage.getItem(legacyWorkspaceStorageKey);
+    if (!raw) return { activeProjectKey: '', projects: {} };
+    state.migratedLegacyWorkspace = true;
     return {
-      selected: typeof parsed.selected === 'string' ? parsed.selected : null,
-      mode: normalizeMode(parsed.mode),
-      mobileViewerExpanded: Boolean(parsed.mobileViewerExpanded),
-      openTabs,
-      tabStates: parsed.tabStates && typeof parsed.tabStates === 'object' ? parsed.tabStates : {},
-      splitPane: {
-        open: Boolean(splitPane.open && selectedPath),
-        orientation: splitPane.orientation === 'down' ? 'down' : 'right',
-        tabs: splitTabs,
-        selectedPath,
-        mode: normalizeMode(splitPane.mode),
-      },
+      activeProjectKey: '',
+      projects: state.projects[0] ? { [state.projects[0].key]: normalizeProjectWorkspace(JSON.parse(raw)) } : {},
     };
   } catch {
-    return null;
+    return { activeProjectKey: '', projects: {} };
   }
 }
 
-function applyWorkspaceState() {
-  const saved = loadWorkspaceState();
-  if (!saved) return;
-  state.selected = saved.selected;
-  state.mode = saved.mode;
-  state.mobileViewerExpanded = saved.mobileViewerExpanded;
-  state.openTabs = saved.openTabs;
-  state.tabStates = saved.tabStates;
-  state.splitPane = saved.splitPane;
+function projectWorkspace(projectKey = state.currentProjectKey) {
+  if (!projectKey) return defaultProjectWorkspace();
+  if (!state.workspace.projects[projectKey]) {
+    state.workspace.projects[projectKey] = defaultProjectWorkspace();
+  }
+  return state.workspace.projects[projectKey];
 }
 
-function saveWorkspaceState() {
-  if (state.embed) return;
-  localStorage.setItem(workspaceStorageKey, JSON.stringify({
+function captureProjectWorkspace() {
+  if (!state.currentProjectKey) return;
+  state.workspace.activeProjectKey = state.currentProjectKey;
+  state.workspace.projects[state.currentProjectKey] = normalizeProjectWorkspace({
+    view: state.view,
     selected: state.selected,
     mode: state.mode,
     mobileViewerExpanded: state.mobileViewerExpanded,
     openTabs: state.openTabs,
     tabStates: state.tabStates,
+    expandedGroups: [...state.expandedGroups],
     splitPane: state.splitPane,
-  }));
+    selectedCommitHash: state.selectedCommit?.hash || null,
+    selectedCommitFile: state.selectedCommitFile,
+  });
+}
+
+function applyProjectWorkspace(projectKey) {
+  const saved = projectWorkspace(projectKey);
+  state.view = saved.view;
+  state.selected = saved.selected;
+  state.mode = saved.mode;
+  state.mobileViewerExpanded = saved.mobileViewerExpanded;
+  state.openTabs = saved.openTabs;
+  state.tabStates = saved.tabStates;
+  state.expandedGroups = new Set(saved.expandedGroups);
+  state.splitPane = saved.splitPane;
+  state.children = new Map();
+  state.history = [];
+  state.selectedCommit = saved.selectedCommitHash ? { hash: saved.selectedCommitHash } : null;
+  state.commitFiles = [];
+  state.selectedCommitFile = saved.selectedCommitFile;
+  state.status = null;
+  state.content = '';
+  state.editorReady = false;
+  state.saveInProgress = false;
+}
+
+function chooseInitialProjectKey() {
+  const available = new Set(state.projects.map((project) => project.key));
+  if (state.initialProjectKey && available.has(state.initialProjectKey)) {
+    return state.initialProjectKey;
+  }
+  if (!state.embed && state.workspace.activeProjectKey && available.has(state.workspace.activeProjectKey)) {
+    return state.workspace.activeProjectKey;
+  }
+  return state.projects[0]?.key || '';
+}
+
+function saveWorkspaceState() {
+  captureProjectWorkspace();
+  if (state.embed) return;
+  localStorage.setItem(workspaceStorageKey, JSON.stringify(state.workspace));
+  if (state.migratedLegacyWorkspace) {
+    localStorage.removeItem(legacyWorkspaceStorageKey);
+    state.migratedLegacyWorkspace = false;
+  }
 }
 
 function notifyEmbedState() {
@@ -141,6 +233,7 @@ function notifySplitEmbedState() {
   target.postMessage({
     type: 'mindgit:embed-state',
     payload: {
+      projectKey: state.currentProjectKey,
       selectedPath: state.splitPane.selectedPath,
       mode: state.splitPane.mode,
       tabs: state.splitPane.tabs,
@@ -221,13 +314,69 @@ function handleFileContentMessage(event) {
 
 function parseInitialTabs() {
   try {
-    return uniquePaths(JSON.parse(new URLSearchParams(window.location.search).get('tabs') || '[]'));
+    return uniquePaths(JSON.parse(initialParams.get('tabs') || '[]'));
   } catch {
     return [];
   }
 }
 
-applyWorkspaceState();
+function currentProject() {
+  return state.projectsByKey.get(state.currentProjectKey) || null;
+}
+
+function updateProjectSwitcher() {
+  const button = $('project-switcher');
+  if (!button) return;
+  const project = currentProject();
+  const visible = !state.embed && state.projects.length > 1 && project;
+  button.hidden = !visible;
+  if (!project) {
+    button.textContent = '';
+    button.title = '';
+    return;
+  }
+  button.textContent = project.name;
+  button.title = project.root;
+}
+
+async function loadProjects() {
+  const response = await fetch('/api/projects', { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  state.projects = Array.isArray(data.projects) ? data.projects : [];
+  state.projectsByKey = new Map(state.projects.map((project) => [project.key, project]));
+  state.workspace = loadStoredWorkspaceBundle();
+  state.currentProjectKey = chooseInitialProjectKey();
+  applyProjectWorkspace(state.currentProjectKey);
+  updateProjectSwitcher();
+  if (!state.embed && state.currentProjectKey) {
+    saveWorkspaceState();
+  }
+}
+
+function openProjectMenu(anchor) {
+  if (state.projects.length < 2) return;
+  showActionMenu(anchor, state.projects.map((project) => ({
+    label: project.name,
+    active: project.key === state.currentProjectKey,
+    action: () => switchProject(project.key),
+  })));
+}
+
+async function switchProject(projectKey) {
+  if (!projectKey || projectKey === state.currentProjectKey) return;
+  saveCurrentTabState();
+  captureProjectWorkspace();
+  cleanupSplitPaneResizeObserver();
+  state.currentProjectKey = projectKey;
+  applyProjectWorkspace(projectKey);
+  updateProjectSwitcher();
+  syncLayoutState();
+  renderFileTabs();
+  $('viewer').innerHTML = '<div class="empty">Loading project...</div>';
+  saveWorkspaceState();
+  await refresh();
+}
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -309,9 +458,14 @@ function syncLayoutState() {
 }
 
 async function api(path, options) {
-  const response = await fetch(path, {
+  const { includeProject = true, ...fetchOptions } = options || {};
+  const url = new URL(path, window.location.origin);
+  if (includeProject && state.currentProjectKey) {
+    url.searchParams.set('project', state.currentProjectKey);
+  }
+  const response = await fetch(`${url.pathname}${url.search}`, {
     cache: 'no-store',
-    ...options,
+    ...fetchOptions,
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || response.statusText);
@@ -394,6 +548,8 @@ async function refreshWorkspaceOutline() {
 
 function renderStatus() {
   const status = state.status;
+  if (!status) return;
+  updateProjectSwitcher();
   if ($('root')) $('root').textContent = status.root;
   if ($('branch')) $('branch').textContent = status.branch;
   if ($('modified')) $('modified').textContent = status.modified;
@@ -521,6 +677,7 @@ async function setMode(mode) {
 function splitSrc(pane) {
   const params = new URLSearchParams({
     embed: '1',
+    project: state.currentProjectKey,
     path: pane.selectedPath,
     mode: pane.mode,
     split: pane.orientation,
@@ -533,11 +690,26 @@ function splitSrc(pane) {
 async function applyEmbedState(payload = {}) {
   if (!state.embed) return false;
 
+  const nextProjectKey = typeof payload.projectKey === 'string' ? payload.projectKey : '';
   const nextTabs = uniquePaths(payload.tabs);
   const nextSelectedPath = typeof payload.selectedPath === 'string'
     ? payload.selectedPath
     : nextTabs[0] || '';
   const nextMode = normalizeMode(payload.mode);
+  const projectChanged = Boolean(nextProjectKey && nextProjectKey !== state.currentProjectKey);
+
+  if (projectChanged) {
+    state.currentProjectKey = nextProjectKey;
+    state.status = null;
+    state.children = new Map();
+    state.expandedGroups = new Set();
+    state.history = [];
+    state.selectedCommit = null;
+    state.commitFiles = [];
+    state.selectedCommitFile = null;
+    state.tabStates = {};
+    updateProjectSwitcher();
+  }
 
   state.openTabs = nextTabs;
 
@@ -552,7 +724,7 @@ async function applyEmbedState(payload = {}) {
     return true;
   }
 
-  if (state.selected !== nextSelectedPath) {
+  if (projectChanged || state.selected !== nextSelectedPath) {
     await selectFile(nextSelectedPath, { mode: nextMode, restoreState: false });
     return true;
   }
@@ -847,6 +1019,10 @@ if ($('worktree-view')) $('worktree-view').addEventListener('click', () => setVi
 if ($('history-view')) $('history-view').addEventListener('click', () => setView('history'));
 if ($('theme-toggle')) $('theme-toggle').addEventListener('click', toggleTheme);
 if ($('refresh')) $('refresh').addEventListener('click', refreshWorkspaceOutline);
+if ($('project-switcher')) $('project-switcher').addEventListener('click', (event) => {
+  event.stopPropagation();
+  openProjectMenu(event.currentTarget);
+});
 if ($('tree-root-menu')) $('tree-root-menu').addEventListener('click', (event) => {
   event.stopPropagation();
   if (state.view !== 'worktree') return;
@@ -877,6 +1053,7 @@ if (systemThemeMediaQuery) {
 }
 
 async function bootstrap() {
+  await loadProjects();
   await refresh();
   if (state.embed) {
     const initialTabs = parseInitialTabs();

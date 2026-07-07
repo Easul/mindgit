@@ -24,19 +24,20 @@ function renderHistory() {
   $('modified').textContent = '0';
   $('added').textContent = '0';
   $('deleted').textContent = '0';
-  $('lines').textContent = state.selectedCommit ? state.selectedCommit.shortHash : '+0 -0';
+  $('lines').textContent = state.selectedCommit?.shortHash || '+0 -0';
   $('change-title').textContent = `History (${state.history.length})`;
   $('file-list').innerHTML = `
     <div class="commit-list">
       ${state.history.map(renderCommit).join('') || '<div class="empty">No commits</div>'}
     </div>
     ${state.selectedCommit ? renderCommitFiles() : ''}`;
-  $('review-summary').textContent = state.selectedCommit
+  $('review-summary').textContent = state.selectedCommit?.subject
     ? `${state.selectedCommit.shortHash}: ${state.selectedCommit.subject}`
     : '选择提交后，这里会显示提交摘要。';
   if (!state.selectedCommitFile) {
     $('viewer').innerHTML = '<div class="empty">No file selected</div>';
   }
+  saveWorkspaceState();
 }
 
 function renderCommit(commit) {

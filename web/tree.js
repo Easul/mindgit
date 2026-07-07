@@ -94,6 +94,7 @@ async function handleTreeClick(event) {
       state.expandedGroups.add(dir);
     }
     renderStatus();
+    saveWorkspaceState();
     return;
   }
   const file = event.target.closest('[data-path]');
