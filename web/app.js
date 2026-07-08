@@ -636,7 +636,8 @@ function currentInteractionTarget() {
   if (state.mode === 'edit') {
     return $('editor') || $('viewer')?.querySelector('.structured-source') || null;
   }
-  return $('code-viewer-scroll')
+  return $('markdown-viewer-scroll')
+    || $('code-viewer-scroll')
     || $('viewer')?.querySelector('pre')
     || $('image-viewer')
     || $('viewer')?.querySelector('.structured-source')
@@ -683,7 +684,7 @@ function restoreInteractionAfterResize(options = {}) {
 
 function findInteractionTargetFromNode(startNode) {
   if (!(startNode instanceof Element)) return null;
-  return startNode.closest('#editor, #code-viewer-scroll, #image-viewer, #viewer > pre, .structured-source, .mxgraph-canvas, .mindmap-canvas, .xmind-sheets');
+  return startNode.closest('#editor, #markdown-viewer-scroll, #code-viewer-scroll, #image-viewer, #viewer > pre, .structured-source, .mxgraph-canvas, .mindmap-canvas, .xmind-sheets');
 }
 
 function syncInteractionTargetFromWheel(event) {
@@ -698,6 +699,55 @@ function syncInteractionTargetFromPointer(event) {
   if (!target) return;
   focusCurrentInteractionWindow();
   focusWithoutScroll(target);
+}
+
+function setLinkOpenModifierHint(active) {
+  document.documentElement.dataset.linkOpenModifier = active ? 'true' : 'false';
+}
+
+function clearLinkOpenModifierHint() {
+  setLinkOpenModifierHint(false);
+}
+
+function escapeSelectorValue(value) {
+  if (window.CSS?.escape) return window.CSS.escape(value);
+  return String(value).replace(/[^A-Za-z0-9_-]/g, '\\$&');
+}
+
+function revealMarkdownAnchor(hash) {
+  const targetId = decodeURIComponent(String(hash || '').replace(/^#/, ''));
+  if (!targetId) return;
+  requestAnimationFrame(() => {
+    const anchor = $('viewer')?.querySelector(`#${escapeSelectorValue(targetId)}`);
+    anchor?.scrollIntoView({ block: 'start' });
+  });
+}
+
+async function handleViewerLinkClick(event) {
+  if (event.defaultPrevented || event.button !== 0) return;
+  if (!(event.target instanceof Element)) return;
+
+  const anchor = event.target.closest('#viewer a[href]');
+  if (!anchor) return;
+
+  const isModifiedOpen = hasOpenLinkModifier(event);
+  const localPath = anchor.dataset.mindgitPath || '';
+  const hash = anchor.dataset.mindgitHash || anchor.hash?.slice(1) || '';
+
+  if (localPath) {
+    event.preventDefault();
+    if (isModifiedOpen) {
+      window.open(anchor.href, '_blank', 'noopener');
+      return;
+    }
+    await selectFile(localPath, { mode: 'full', restoreState: false });
+    if (hash) revealMarkdownAnchor(hash);
+    return;
+  }
+
+  if (!isModifiedOpen) return;
+  event.preventDefault();
+  window.open(anchor.href, '_blank', 'noopener');
 }
 
 async function setMode(mode) {
@@ -1080,9 +1130,17 @@ window.addEventListener('message', handleSplitPaneMessage);
 window.addEventListener('beforeunload', cleanupSplitPaneResizeObserver);
 window.addEventListener('resize', syncViewerHeight);
 window.addEventListener('resize', scheduleProjectSwitcherLabelSync);
+window.addEventListener('blur', clearLinkOpenModifierHint);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearLinkOpenModifierHint();
+});
+document.addEventListener('keydown', (event) => setLinkOpenModifierHint(hasOpenLinkModifier(event)), true);
+document.addEventListener('keyup', (event) => setLinkOpenModifierHint(hasOpenLinkModifier(event)), true);
+document.addEventListener('click', handleViewerLinkClick, true);
 document.addEventListener('wheel', syncInteractionTargetFromWheel, { capture: true, passive: true });
 document.addEventListener('pointerdown', syncInteractionTargetFromPointer, true);
 setupDesktopResizers();
+clearLinkOpenModifierHint();
 
 if (systemThemeMediaQuery) {
   const syncSystemTheme = (event) => {

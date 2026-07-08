@@ -356,6 +356,79 @@ function escapeAttr(value) {
   return escapeHTML(value).replace(/'/g, '&#39;');
 }
 
+function hasOpenLinkModifier(event) {
+  return Boolean((event?.ctrlKey || event?.metaKey) && !event?.altKey);
+}
+
+function trimPlainTextURL(url) {
+  let trimmed = String(url || '');
+
+  while (/[.,!?;:]+$/.test(trimmed)) {
+    trimmed = trimmed.slice(0, -1);
+  }
+
+  const balancePairs = [
+    ['(', ')'],
+    ['[', ']'],
+    ['{', '}'],
+  ];
+
+  for (const [openChar, closeChar] of balancePairs) {
+    while (trimmed.endsWith(closeChar)) {
+      const opens = (trimmed.match(new RegExp(`\\${openChar}`, 'g')) || []).length;
+      const closes = (trimmed.match(new RegExp(`\\${closeChar}`, 'g')) || []).length;
+      if (closes <= opens) break;
+      trimmed = trimmed.slice(0, -1);
+    }
+  }
+
+  return trimmed;
+}
+
+function findURLsInText(text) {
+  const source = String(text || '');
+  const regex = /\b(?:https?:\/\/|mailto:)[^\s<>"'`]+/gi;
+  const matches = [];
+  let match;
+
+  while ((match = regex.exec(source)) !== null) {
+    const raw = match[0];
+    const trimmed = trimPlainTextURL(raw);
+    if (!trimmed) continue;
+    matches.push({
+      url: trimmed,
+      start: match.index,
+      end: match.index + trimmed.length,
+    });
+    regex.lastIndex = match.index + raw.length;
+  }
+
+  return matches;
+}
+
+function urlMatchAtPosition(text, position) {
+  if (!Number.isInteger(position) || position < 0) return null;
+  return findURLsInText(text).find((match) => position >= match.start && position < match.end) || null;
+}
+
+function linkifyPlainTextHTML(text) {
+  const source = String(text || '');
+  const matches = findURLsInText(source);
+  if (!matches.length) return escapeHTML(source);
+
+  let html = '';
+  let cursor = 0;
+
+  for (const match of matches) {
+    html += escapeHTML(source.slice(cursor, match.start));
+    html += `<a href="${escapeAttr(match.url)}">${escapeHTML(match.url)}</a>`;
+    cursor = match.end;
+  }
+
+  html += escapeHTML(source.slice(cursor));
+  return html;
+}
+
 document.addEventListener('click', (event) => {
   if (activeActionMenu && !event.target.closest('.action-menu')) {
     closeActionMenu();

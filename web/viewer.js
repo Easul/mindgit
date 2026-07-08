@@ -4,7 +4,8 @@ function updateEditButton(label, options = {}) {
 
 function getViewerScrollTarget(root = $('viewer')) {
   if (!root) return null;
-  return root.querySelector('#code-viewer-scroll')
+  return root.querySelector('#markdown-viewer-scroll')
+    || root.querySelector('#code-viewer-scroll')
     || root.querySelector('#viewer > pre')
     || root.querySelector('.image-viewer')
     || null;
@@ -51,6 +52,7 @@ function attachScrollableInteractionTarget(scrollTarget) {
 
 async function renderSelected() {
   if (!state.selected) return;
+  cleanupViewerArtifacts();
 
   const file = state.status.files.find((item) => item.path === state.selected);
   if ($('review-summary')) {
@@ -277,10 +279,28 @@ function renderImageViewer(imagePath) {
   document.addEventListener('mousemove', handleMouseMove);
   document.addEventListener('mouseup', handleMouseUp);
 
-  viewer.dataset.cleanup = () => {
+  viewer._mindgitCleanup = () => {
     document.removeEventListener('mousemove', handleMouseMove);
     document.removeEventListener('mouseup', handleMouseUp);
   };
+}
+
+function cleanupViewerArtifacts() {
+  const viewer = $('viewer');
+  if (!viewer) return;
+  if (typeof viewer._mindgitCleanup === 'function') {
+    try {
+      viewer._mindgitCleanup();
+    } catch {}
+    viewer._mindgitCleanup = null;
+  }
+  const nestedCleanupTarget = viewer.querySelector('[data-mindgit-cleanup="true"]');
+  if (nestedCleanupTarget && typeof nestedCleanupTarget._mindgitCleanup === 'function') {
+    try {
+      nestedCleanupTarget._mindgitCleanup();
+    } catch {}
+    nestedCleanupTarget._mindgitCleanup = null;
+  }
 }
 
 async function saveFile() {
@@ -325,6 +345,11 @@ async function saveFile() {
 }
 
 function renderFullContent(content, filename) {
+  if (isMarkdownFile(filename)) {
+    renderMarkdownContent(content, filename);
+    return;
+  }
+
   const lines = splitEditorLines(content);
   const ext = filename.split('.').pop().toLowerCase();
   const langMap = {
@@ -338,6 +363,9 @@ function renderFullContent(content, filename) {
   const language = langMap[ext] || 'plaintext';
 
   const highlightedLines = lines.map(line => {
+    if (findURLsInText(line).length) {
+      return linkifyPlainTextHTML(line || ' ');
+    }
     if (language !== 'plaintext' && typeof hljs !== 'undefined') {
       try {
         return hljs.highlight(line || ' ', { language, ignoreIllegals: true }).value;
@@ -381,6 +409,404 @@ function renderFullContent(content, filename) {
       scrollToLine(parseInt(lineNum.dataset.line, 10));
     });
   });
+}
+
+function isMarkdownFile(path) {
+  const ext = path.split('.').pop().toLowerCase();
+  return ['md', 'markdown', 'mdown', 'mkd', 'mkdn'].includes(ext);
+}
+
+function renderMarkdownContent(content, filename) {
+  const context = {
+    path: filename,
+    headingIds: new Map(),
+  };
+  const html = renderMarkdownBlocks(normalizeMarkdownSource(content).split('\n'), context);
+  $('viewer').innerHTML = `<div class="markdown-viewer-scroll" id="markdown-viewer-scroll" tabindex="-1">
+    <article class="markdown-body">${html}</article>
+  </div>`;
+  attachScrollableInteractionTarget(getViewerScrollTarget());
+}
+
+function normalizeMarkdownSource(content) {
+  return String(content || '').replace(/\r\n?/g, '\n');
+}
+
+function renderMarkdownBlocks(lines, context) {
+  const blocks = [];
+
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index];
+
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const fenceMatch = line.match(/^\s{0,3}(```+|~~~+)\s*([A-Za-z0-9_+-]*)\s*$/);
+    if (fenceMatch) {
+      const fence = fenceMatch[1];
+      const language = fenceMatch[2] || '';
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !new RegExp(`^\\s{0,3}${escapeRegExp(fence)}\\s*$`).test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      blocks.push(renderMarkdownCodeBlock(codeLines.join('\n'), language));
+      continue;
+    }
+
+    const headingMatch = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const text = headingMatch[2].trim();
+      const id = uniqueMarkdownHeadingId(text, context.headingIds);
+      blocks.push(`<h${level} id="${escapeAttr(id)}">${renderMarkdownInlines(text, context)}</h${level}>`);
+      index += 1;
+      continue;
+    }
+
+    if (/^\s{0,3}(?:\*\s*){3,}$/.test(line) || /^\s{0,3}(?:-\s*){3,}$/.test(line) || /^\s{0,3}(?:_\s*){3,}$/.test(line)) {
+      blocks.push('<hr>');
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*> ?/.test(line)) {
+      const quoteLines = [];
+      while (index < lines.length && (lines[index].trim() === '' || /^\s*> ?/.test(lines[index]))) {
+        quoteLines.push(lines[index].replace(/^\s*> ?/, ''));
+        index += 1;
+      }
+      blocks.push(`<blockquote>${renderMarkdownBlocks(quoteLines, context)}</blockquote>`);
+      continue;
+    }
+
+    if (isMarkdownTableStart(lines, index)) {
+      const tableLines = [lines[index], lines[index + 1]];
+      index += 2;
+      while (index < lines.length && lines[index].trim() && lines[index].includes('|')) {
+        tableLines.push(lines[index]);
+        index += 1;
+      }
+      blocks.push(renderMarkdownTable(tableLines, context));
+      continue;
+    }
+
+    if (matchMarkdownListItem(line)) {
+      const parsed = renderMarkdownList(lines, index, context);
+      blocks.push(parsed.html);
+      index = parsed.nextIndex;
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length && lines[index].trim() && !isMarkdownBlockBoundary(lines, index)) {
+      paragraphLines.push(lines[index]);
+      index += 1;
+    }
+    if (!paragraphLines.length) {
+      paragraphLines.push(lines[index]);
+      index += 1;
+    }
+    const paragraph = paragraphLines.join('\n').replace(/ {2,}\n/g, '\u0000BR\u0000').replace(/\n/g, ' ');
+    blocks.push(`<p>${renderMarkdownInlines(paragraph, context)}</p>`);
+  }
+
+  return blocks.join('');
+}
+
+function isMarkdownBlockBoundary(lines, index) {
+  if (index <= 0) return false;
+  const line = lines[index];
+  return /^\s{0,3}(```+|~~~+)/.test(line)
+    || /^\s{0,3}(#{1,6})\s+/.test(line)
+    || /^\s*> ?/.test(line)
+    || matchMarkdownListItem(line)
+    || isMarkdownTableStart(lines, index)
+    || /^\s{0,3}(?:\*\s*){3,}$/.test(line)
+    || /^\s{0,3}(?:-\s*){3,}$/.test(line)
+    || /^\s{0,3}(?:_\s*){3,}$/.test(line);
+}
+
+function renderMarkdownCodeBlock(code, language) {
+  let html = escapeHTML(code);
+  if (language && typeof hljs !== 'undefined') {
+    try {
+      html = hljs.highlight(code, { language, ignoreIllegals: true }).value;
+    } catch {}
+  }
+  const langClass = language ? ` class="language-${escapeAttr(language)}"` : '';
+  return `<pre><code${langClass}>${html}</code></pre>`;
+}
+
+function matchMarkdownListItem(line) {
+  return line.match(/^(\s*)([*+-]|\d+\.)([ \t]+)(.*)$/);
+}
+
+function renderMarkdownList(lines, startIndex, context) {
+  const firstMatch = matchMarkdownListItem(lines[startIndex]);
+  const baseIndent = firstMatch[1].length;
+  const ordered = /\d+\./.test(firstMatch[2]);
+  const items = [];
+  let nextIndex = startIndex;
+  let hasTaskItems = false;
+
+  while (nextIndex < lines.length) {
+    const match = matchMarkdownListItem(lines[nextIndex]);
+    if (!match || match[1].length !== baseIndent || /\d+\./.test(match[2]) !== ordered) {
+      break;
+    }
+
+    const continuationIndent = match[1].length + match[2].length + match[3].length;
+    const itemLines = [match[4]];
+    nextIndex += 1;
+
+    while (nextIndex < lines.length) {
+      const current = lines[nextIndex];
+      if (!current.trim()) {
+        itemLines.push('');
+        nextIndex += 1;
+        continue;
+      }
+
+      const siblingMatch = matchMarkdownListItem(current);
+      if (siblingMatch && siblingMatch[1].length <= baseIndent) {
+        break;
+      }
+
+      const currentIndent = current.match(/^\s*/)[0].length;
+      if (currentIndent <= baseIndent && (isMarkdownBlockBoundary(lines, nextIndex) || currentIndent < continuationIndent)) {
+        break;
+      }
+
+      if (current.length >= continuationIndent) {
+        itemLines.push(current.slice(continuationIndent));
+      } else {
+        itemLines.push(current.trimStart());
+      }
+      nextIndex += 1;
+    }
+
+    let itemClass = '';
+    let prefix = '';
+    const taskMatch = itemLines[0].match(/^\[( |x|X)\]\s+(.*)$/);
+    if (taskMatch) {
+      hasTaskItems = true;
+      itemClass = ' class="task-list-item"';
+      prefix = `<input type="checkbox" disabled${taskMatch[1].toLowerCase() === 'x' ? ' checked' : ''}>`;
+      itemLines[0] = taskMatch[2];
+    }
+
+    const itemHTML = unwrapMarkdownListItem(renderMarkdownBlocks(itemLines, context));
+    items.push(`<li${itemClass}>${prefix}${itemHTML}</li>`);
+  }
+
+  const listClass = hasTaskItems ? ' class="contains-task-list"' : '';
+  const tag = ordered ? 'ol' : 'ul';
+  return {
+    html: `<${tag}${listClass}>${items.join('')}</${tag}>`,
+    nextIndex,
+  };
+}
+
+function unwrapMarkdownListItem(html) {
+  const trimmed = html.trim();
+  const match = trimmed.match(/^<p>([\s\S]*)<\/p>$/);
+  return match ? match[1] : trimmed;
+}
+
+function isMarkdownTableStart(lines, index) {
+  if (index + 1 >= lines.length) return false;
+  if (!lines[index].includes('|')) return false;
+  return /^\s*\|?(?:\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/.test(lines[index + 1]);
+}
+
+function renderMarkdownTable(lines, context) {
+  const headerCells = splitMarkdownTableRow(lines[0]);
+  const alignments = splitMarkdownTableRow(lines[1]).map((cell) => {
+    const trimmed = cell.trim();
+    if (trimmed.startsWith(':') && trimmed.endsWith(':')) return 'center';
+    if (trimmed.endsWith(':')) return 'right';
+    return 'left';
+  });
+  const bodyRows = lines.slice(2).map(splitMarkdownTableRow);
+
+  const renderCell = (tag, value, align, index) => {
+    const style = align ? ` style="text-align:${align}"` : '';
+    const content = renderMarkdownInlines((value ?? '').trim(), context);
+    return `<${tag}${style}>${content || (tag === 'th' ? `Column ${index + 1}` : '')}</${tag}>`;
+  };
+
+  return `<table><thead><tr>${headerCells.map((cell, index) =>
+    renderCell('th', cell, alignments[index] || 'left', index)).join('')}</tr></thead><tbody>${bodyRows.map((row) =>
+    `<tr>${headerCells.map((_, index) => renderCell('td', row[index] || '', alignments[index] || 'left', index)).join('')}</tr>`).join('')}</tbody></table>`;
+}
+
+function splitMarkdownTableRow(line) {
+  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells = [];
+  let current = '';
+  let escaping = false;
+
+  for (const char of trimmed) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaping = true;
+      current += char;
+      continue;
+    }
+    if (char === '|') {
+      cells.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+
+  cells.push(current);
+  return cells;
+}
+
+function renderMarkdownInlines(source, context) {
+  const placeholders = [];
+  const stash = (html) => {
+    const token = `\u0000MD${placeholders.length}\u0000`;
+    placeholders.push(html);
+    return token;
+  };
+
+  let text = String(source || '');
+
+  text = text.replace(/(`+)([\s\S]*?)\1/g, (_, ticks, code) =>
+    stash(`<code>${escapeHTML(code.replace(/\n/g, ' '))}</code>`));
+
+  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+["']([^"']+)["'])?\)/g, (_, alt, destination, title) => {
+    const link = resolveMarkdownLinkTarget(destination, context.path);
+    if (!link?.href) return _;
+    const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+    const src = link.type === 'local' ? markdownAssetURL(link.path) : link.href;
+    return stash(`<img src="${escapeAttr(src)}" alt="${escapeAttr(alt)}"${titleAttr}>`);
+  });
+
+  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+["']([^"']+)["'])?\)/g, (_, label, destination, title) => {
+    const link = resolveMarkdownLinkTarget(destination, context.path);
+    if (!link?.href) return _;
+    const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+    const localAttr = link.type === 'local' ? ` data-mindgit-path="${escapeAttr(link.path)}"` : '';
+    const hashAttr = link.hash ? ` data-mindgit-hash="${escapeAttr(link.hash)}"` : '';
+    const content = renderMarkdownInlines(label, context);
+    return stash(`<a href="${escapeAttr(link.href)}"${titleAttr}${localAttr}${hashAttr}>${content}</a>`);
+  });
+
+  text = text.replace(/<((?:https?:\/\/|mailto:)[^>\s]+)>/g, (_, href) =>
+    stash(`<a href="${escapeAttr(href)}">${escapeHTML(href)}</a>`));
+
+  const bareURLs = findURLsInText(text);
+  if (bareURLs.length) {
+    let rebuilt = '';
+    let cursor = 0;
+    for (const match of bareURLs) {
+      rebuilt += text.slice(cursor, match.start);
+      rebuilt += stash(`<a href="${escapeAttr(match.url)}">${escapeHTML(match.url)}</a>`);
+      cursor = match.end;
+    }
+    rebuilt += text.slice(cursor);
+    text = rebuilt;
+  }
+
+  text = escapeHTML(text);
+  text = text.replace(/\u0000BR\u0000/g, '<br>');
+  text = text.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  text = text.replace(/(^|[^\w])\*\*([^\s][\s\S]*?[^\s])\*\*(?!\w)/g, '$1<strong>$2</strong>');
+  text = text.replace(/(^|[^\w])__([^\s][\s\S]*?[^\s])__(?!\w)/g, '$1<strong>$2</strong>');
+  text = text.replace(/(^|[^\w])\*([^\s][\s\S]*?[^\s])\*(?!\w)/g, '$1<em>$2</em>');
+  text = text.replace(/(^|[^\w])_([^\s][\s\S]*?[^\s])_(?!\w)/g, '$1<em>$2</em>');
+  text = text.replace(/\u0000MD(\d+)\u0000/g, (_, index) => placeholders[Number(index)] || '');
+  return text;
+}
+
+function markdownAssetURL(path) {
+  const url = new URL('/api/file', window.location.origin);
+  url.searchParams.set('path', path);
+  if (state.currentProjectKey) {
+    url.searchParams.set('project', state.currentProjectKey);
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+function resolveMarkdownLinkTarget(destination, currentPath) {
+  const raw = String(destination || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('#')) {
+    return { type: 'fragment', href: raw, hash: raw.slice(1) };
+  }
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(raw) || raw.startsWith('//')) {
+    return { type: 'external', href: raw };
+  }
+
+  const hashIndex = raw.indexOf('#');
+  const hash = hashIndex >= 0 ? raw.slice(hashIndex + 1) : '';
+  const pathPart = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw;
+  const baseDir = currentPath.includes('/') ? currentPath.slice(0, currentPath.lastIndexOf('/') + 1) : '';
+  const candidate = pathPart.startsWith('/') ? pathPart.replace(/^\/+/, '') : `${baseDir}${pathPart}`;
+  const resolvedPath = normalizeRepoRelativePath(candidate);
+  if (!resolvedPath) {
+    return null;
+  }
+
+  const href = new URL('/', window.location.origin);
+  if (state.currentProjectKey) href.searchParams.set('project', state.currentProjectKey);
+  href.searchParams.set('path', resolvedPath);
+  href.searchParams.set('mode', 'full');
+  if (hash) href.hash = hash;
+  return {
+    type: 'local',
+    href: `${href.pathname}${href.search}${href.hash}`,
+    path: resolvedPath,
+    hash,
+  };
+}
+
+function normalizeRepoRelativePath(path) {
+  const parts = [];
+  for (const segment of String(path || '').split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (!parts.length) return null;
+      parts.pop();
+      continue;
+    }
+    parts.push(segment);
+  }
+  return parts.join('/');
+}
+
+function uniqueMarkdownHeadingId(text, registry) {
+  const base = slugifyMarkdownHeading(text) || 'section';
+  const current = registry.get(base) || 0;
+  registry.set(base, current + 1);
+  return current ? `${base}-${current}` : base;
+}
+
+function slugifyMarkdownHeading(text) {
+  return String(text || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[`*_~()[\]{}<>]/g, '')
+    .replace(/[^\w\u4e00-\u9fff -]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function measureMonospaceCharWidth(referenceEl) {
@@ -462,6 +888,6 @@ function renderDiff(diff) {
     if (line.startsWith('+') && !line.startsWith('+++')) cls += ' diff-add';
     if (line.startsWith('-') && !line.startsWith('---')) cls += ' diff-del';
     if (line.startsWith('@@')) cls += ' diff-hunk';
-    return `<span class="${cls}">${escapeHTML(line)}</span>`;
+    return `<span class="${cls}">${linkifyPlainTextHTML(line)}</span>`;
   }).join('\n');
 }

@@ -6,19 +6,85 @@ function setupEditorShortcuts(editor) {
   const lineHighlight = $('editor-line-highlight');
   const highlightEl = $('editor-highlight');
   const blockSelectionOverlay = createBlockSelectionOverlay(editor);
+  const linkHintOverlay = createEditorLinkHintOverlay(editor);
   const commandBar = createEditorCommandBar(editor);
+  const linkHintAbort = new AbortController();
+  const listenerOptions = { signal: linkHintAbort.signal };
 
   let blockSelection = null;
   let undoStack = [createHistoryState()];
   let redoStack = [];
   let lastValue = editor.value;
   let isUndoRedo = false;
+  let linkModifierActive = false;
+  let lastHoverPoint = null;
+  let hoveredLinkTarget = null;
+
+  function hideEditorLinkHint() {
+    hoveredLinkTarget = null;
+    linkHintOverlay.hidden = true;
+    editor.style.cursor = 'text';
+  }
+
+  function showEditorLinkHint(target) {
+    hoveredLinkTarget = target;
+    if (editor.classList.contains('wrap-enabled')) {
+      linkHintOverlay.hidden = true;
+      editor.style.cursor = 'pointer';
+      return;
+    }
+
+    const lines = splitEditorLines(editor.value);
+    const start = findLineAndColumnAtPosition(lines, target.start);
+    const end = findLineAndColumnAtPosition(lines, target.end);
+    if (start.lineIndex !== end.lineIndex) {
+      linkHintOverlay.hidden = true;
+      editor.style.cursor = 'pointer';
+      return;
+    }
+
+    const style = getComputedStyle(editor);
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const paddingTop = parseFloat(style.paddingTop) || 0;
+    const charWidth = getEditorCharWidth(editor);
+    const left = paddingLeft + (start.column * charWidth) - editor.scrollLeft;
+    const top = paddingTop + (start.lineIndex * LINE_HEIGHT) - editor.scrollTop;
+    const width = Math.max(charWidth, (end.column - start.column) * charWidth);
+
+    linkHintOverlay.style.left = `${left}px`;
+    linkHintOverlay.style.top = `${top}px`;
+    linkHintOverlay.style.width = `${width}px`;
+    linkHintOverlay.style.height = `${LINE_HEIGHT}px`;
+    linkHintOverlay.hidden = false;
+    editor.style.cursor = 'pointer';
+  }
+
+  function linkTargetAtPoint(point) {
+    if (!point) return null;
+    const rowCol = getMouseRowCol(editor, point, LINE_HEIGHT);
+    const position = getPositionFromRowCol(editor, rowCol.row, rowCol.col);
+    return urlMatchAtPosition(editor.value, position);
+  }
+
+  function refreshEditorLinkHint() {
+    if (!linkModifierActive || !lastHoverPoint) {
+      hideEditorLinkHint();
+      return;
+    }
+    const target = linkTargetAtPoint(lastHoverPoint);
+    if (!target) {
+      hideEditorLinkHint();
+      return;
+    }
+    showEditorLinkHint(target);
+  }
 
   function syncEditorChrome() {
     if (lineNumbersEl) {
       lineNumbersEl.style.transform = `translateY(${-editor.scrollTop}px)`;
     }
     syncEditorHighlightScroll(editor, highlightEl);
+    refreshEditorLinkHint();
   }
 
   function revealEditorRange(start, end = start) {
@@ -152,12 +218,30 @@ function setupEditorShortcuts(editor) {
     });
   }
 
+  editor.addEventListener('pointerdown', (event) => {
+    if (!hasOpenLinkModifier(event)) return;
+    lastHoverPoint = { clientX: event.clientX, clientY: event.clientY };
+    const target = linkTargetAtPoint(lastHoverPoint);
+    if (!target) return;
+    event.preventDefault();
+  }, listenerOptions);
+
   editor.addEventListener('click', (event) => {
+    if (hasOpenLinkModifier(event)) {
+      lastHoverPoint = { clientX: event.clientX, clientY: event.clientY };
+      const target = linkTargetAtPoint(lastHoverPoint);
+      if (target) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.open(target.url, '_blank', 'noopener');
+        return;
+      }
+    }
     if (lineHighlight) lineHighlight.style.display = 'none';
     if (!event.shiftKey || !event.altKey) {
       clearBlockSelection();
     }
-  });
+  }, listenerOptions);
   editor.addEventListener('input', () => {
     if (lineHighlight) lineHighlight.style.display = 'none';
     if (!editor._mindgitPreserveBlockSelection) {
@@ -207,6 +291,38 @@ function setupEditorShortcuts(editor) {
     }
     isUndoRedo = false;
   });
+
+  editor.addEventListener('mousemove', (event) => {
+    lastHoverPoint = { clientX: event.clientX, clientY: event.clientY };
+    linkModifierActive = hasOpenLinkModifier(event);
+    refreshEditorLinkHint();
+  }, listenerOptions);
+
+  editor.addEventListener('mouseleave', () => {
+    lastHoverPoint = null;
+    hideEditorLinkHint();
+  }, listenerOptions);
+
+  document.addEventListener('keydown', (event) => {
+    linkModifierActive = hasOpenLinkModifier(event);
+    refreshEditorLinkHint();
+  }, { capture: true, signal: linkHintAbort.signal });
+
+  document.addEventListener('keyup', (event) => {
+    linkModifierActive = hasOpenLinkModifier(event);
+    refreshEditorLinkHint();
+  }, { capture: true, signal: linkHintAbort.signal });
+
+  window.addEventListener('blur', () => {
+    linkModifierActive = false;
+    hideEditorLinkHint();
+  }, listenerOptions);
+
+  editor.dataset.mindgitCleanup = 'true';
+  editor._mindgitCleanup = () => {
+    linkHintAbort.abort();
+    hideEditorLinkHint();
+  };
 
   editor.addEventListener('beforeinput', (event) => {
     if (!blockSelection || !isMultiLineBlockSelection(blockSelection) || event.isComposing) return;
@@ -842,6 +958,14 @@ function getPositionFromRowCol(editor, row, col) {
 function createBlockSelectionOverlay(editor) {
   const overlay = document.createElement('div');
   overlay.className = 'editor-block-selection';
+  editor.parentElement.appendChild(overlay);
+  return overlay;
+}
+
+function createEditorLinkHintOverlay(editor) {
+  const overlay = document.createElement('div');
+  overlay.className = 'editor-link-hint';
+  overlay.hidden = true;
   editor.parentElement.appendChild(overlay);
   return overlay;
 }
