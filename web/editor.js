@@ -19,6 +19,18 @@ function setupEditorShortcuts(editor) {
   let linkModifierActive = false;
   let lastHoverPoint = null;
   let hoveredLinkTarget = null;
+  const resizeObserver = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(() => {
+      clearEditorWrapLayoutCache(editor);
+      syncEditorLineNumberLayout(editor, lineNumbersEl, LINE_HEIGHT);
+      if (lineHighlight && lineHighlight.style.display !== 'none') {
+        const cursorLine = getCurrentLine(editor).lineIndex + 1;
+        updateCurrentLineHighlight(cursorLine);
+      }
+    })
+    : null;
+
+  resizeObserver?.observe(editor);
 
   function hideEditorLinkHint() {
     hoveredLinkTarget = null;
@@ -95,8 +107,14 @@ function setupEditorShortcuts(editor) {
 
   function updateCurrentLineHighlight(lineNum) {
     if (!lineHighlight) return;
-    const top = EDITOR_PADDING_TOP + ((lineNum - 1) * LINE_HEIGHT) - editor.scrollTop;
+    const wrapLayout = getEditorWrappedLineLayout(editor, LINE_HEIGHT);
+    const index = Math.max(0, lineNum - 1);
+    const top = EDITOR_PADDING_TOP
+      + (wrapLayout ? (wrapLayout.tops[index] || 0) : index * LINE_HEIGHT)
+      - editor.scrollTop;
+    const height = wrapLayout ? (wrapLayout.heights[index] || LINE_HEIGHT) : LINE_HEIGHT;
     lineHighlight.style.top = `${top}px`;
+    lineHighlight.style.height = `${height}px`;
     lineHighlight.style.display = 'block';
   }
 
@@ -249,6 +267,7 @@ function setupEditorShortcuts(editor) {
       clearBlockSelection();
     }
     clearEditorMeasurementCache(editor);
+    clearEditorWrapLayoutCache(editor);
   });
   editor.addEventListener('keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
@@ -262,6 +281,7 @@ function setupEditorShortcuts(editor) {
     const lineNumbers = renderLineNumberSpans(splitEditorLines(content).length, 'editor-line-num');
     if (lineNumbersEl) {
       lineNumbersEl.innerHTML = lineNumbers;
+      syncEditorLineNumberLayout(editor, lineNumbersEl, LINE_HEIGHT);
     }
 
     syncEditorChrome();
@@ -322,11 +342,15 @@ function setupEditorShortcuts(editor) {
 
   editor.dataset.mindgitCleanup = 'true';
   editor._mindgitCleanup = () => {
+    resizeObserver?.disconnect();
     linkHintAbort.abort();
     hideEditorLinkHint();
     editor._mindgitMeasurementLayer?.root?.remove();
     editor._mindgitMeasurementLayer = null;
+    editor._mindgitWrapMeasurementLayer?.root?.remove();
+    editor._mindgitWrapMeasurementLayer = null;
     clearEditorMeasurementCache(editor);
+    clearEditorWrapLayoutCache(editor);
   };
 
   editor.addEventListener('beforeinput', (event) => {
@@ -474,6 +498,13 @@ function setupEditorShortcuts(editor) {
       if (highlightEl) {
         highlightEl.classList.remove(removeClass);
         highlightEl.classList.add(wrapClass);
+      }
+
+      clearEditorWrapLayoutCache(editor);
+      syncEditorLineNumberLayout(editor, lineNumbersEl, LINE_HEIGHT);
+      if (lineHighlight && lineHighlight.style.display !== 'none') {
+        const cursorLine = getCurrentLine(editor).lineIndex + 1;
+        updateCurrentLineHighlight(cursorLine);
       }
 
       setMessage(state.wordWrap ? 'Word wrap enabled' : 'Word wrap disabled', 'ok');
@@ -981,6 +1012,10 @@ function clearEditorMeasurementCache(editor) {
   editor._mindgitPrefixWidthCache = new Map();
 }
 
+function clearEditorWrapLayoutCache(editor) {
+  editor._mindgitWrapLayout = null;
+}
+
 function getEditorMeasurementLayer(editor) {
   const style = getComputedStyle(editor);
   const signature = `${style.font}|${style.letterSpacing}|${style.tabSize}`;
@@ -1024,6 +1059,163 @@ function getEditorMeasurementLayer(editor) {
   }
 
   return layer;
+}
+
+function getEditorWrapMeasurementLayer(editor) {
+  const style = getComputedStyle(editor);
+  const signature = `${style.font}|${style.letterSpacing}|${style.lineHeight}|${style.tabSize}`;
+  let layer = editor._mindgitWrapMeasurementLayer;
+
+  if (!layer || layer.signature !== signature || !layer.root?.isConnected) {
+    layer?.root?.remove();
+
+    const root = document.createElement('div');
+    root.style.position = 'fixed';
+    root.style.left = '-99999px';
+    root.style.top = '0';
+    root.style.visibility = 'hidden';
+    root.style.pointerEvents = 'none';
+    root.style.margin = '0';
+    root.style.padding = '0';
+    root.style.border = '0';
+    root.style.boxSizing = 'border-box';
+    root.style.font = style.font;
+    root.style.letterSpacing = style.letterSpacing;
+    root.style.lineHeight = style.lineHeight;
+    root.style.tabSize = style.tabSize;
+    root.style.whiteSpace = 'normal';
+
+    document.body.appendChild(root);
+    layer = { signature, root };
+    editor._mindgitWrapMeasurementLayer = layer;
+    clearEditorWrapLayoutCache(editor);
+  }
+
+  return layer;
+}
+
+function getEditorWrappedLineLayout(editor, lineHeight = 20) {
+  if (!editor.classList.contains('wrap-enabled')) return null;
+
+  const style = getComputedStyle(editor);
+  const paddingLeft = parseFloat(style.paddingLeft) || 0;
+  const paddingRight = parseFloat(style.paddingRight) || 0;
+  const contentWidth = Math.max(0, Math.floor(editor.clientWidth - paddingLeft - paddingRight));
+  const cached = editor._mindgitWrapLayout;
+  if (cached && cached.width === contentWidth && cached.value === editor.value) {
+    return cached;
+  }
+
+  const lines = splitEditorLines(editor.value);
+  if (contentWidth <= 0) {
+    const heights = lines.map(() => lineHeight);
+    const tops = [];
+    let offset = 0;
+    for (const height of heights) {
+      tops.push(offset);
+      offset += height;
+    }
+    const fallback = { width: contentWidth, value: editor.value, heights, tops, totalHeight: offset };
+    editor._mindgitWrapLayout = fallback;
+    return fallback;
+  }
+
+  const layer = getEditorWrapMeasurementLayer(editor);
+  layer.root.style.width = `${contentWidth}px`;
+  layer.root.innerHTML = '';
+
+  const fragment = document.createDocumentFragment();
+  for (const line of lines) {
+    const row = document.createElement('div');
+    row.style.whiteSpace = 'pre-wrap';
+    row.style.wordWrap = 'break-word';
+    row.style.overflowWrap = 'break-word';
+    row.style.boxSizing = 'border-box';
+    row.textContent = line || ' ';
+    fragment.appendChild(row);
+  }
+  layer.root.appendChild(fragment);
+
+  const heights = [];
+  const tops = [];
+  let offset = 0;
+  for (const row of layer.root.children) {
+    const measured = Math.max(lineHeight, Math.ceil(row.getBoundingClientRect().height));
+    heights.push(measured);
+    tops.push(offset);
+    offset += measured;
+  }
+
+  const layout = { width: contentWidth, value: editor.value, heights, tops, totalHeight: offset };
+  editor._mindgitWrapLayout = layout;
+  return layout;
+}
+
+function syncEditorLineNumberLayout(editor, lineNumbersEl, lineHeight = 20) {
+  if (!editor || !lineNumbersEl) return;
+
+  const spans = lineNumbersEl.querySelectorAll('.editor-line-num');
+  if (!spans.length) return;
+
+  const wrapLayout = getEditorWrappedLineLayout(editor, lineHeight);
+  if (!wrapLayout) {
+    for (const span of spans) {
+      span.style.height = '';
+      span.style.lineHeight = `${lineHeight}px`;
+    }
+    return;
+  }
+
+  spans.forEach((span, index) => {
+    span.style.height = `${wrapLayout.heights[index] || lineHeight}px`;
+    span.style.lineHeight = `${lineHeight}px`;
+  });
+}
+
+function getEditorVisualLineMetrics(editor, row, lineHeight = 20) {
+  const wrapLayout = getEditorWrappedLineLayout(editor, lineHeight);
+  if (!wrapLayout) {
+    return {
+      top: row * lineHeight,
+      height: lineHeight,
+    };
+  }
+
+  const index = Math.max(0, Math.min(row, wrapLayout.heights.length - 1));
+  return {
+    top: wrapLayout.tops[index] || 0,
+    height: wrapLayout.heights[index] || lineHeight,
+  };
+}
+
+function findEditorRowAtVerticalOffset(editor, offsetY, lineHeight = 20) {
+  const wrapLayout = getEditorWrappedLineLayout(editor, lineHeight);
+  if (!wrapLayout) {
+    const lines = splitEditorLines(editor.value);
+    return Math.max(0, Math.min(lines.length - 1, Math.floor(offsetY / lineHeight)));
+  }
+
+  const tops = wrapLayout.tops;
+  const heights = wrapLayout.heights;
+  if (!tops.length) return 0;
+  if (offsetY <= 0) return 0;
+
+  let low = 0;
+  let high = tops.length - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const top = tops[mid] || 0;
+    const bottom = top + (heights[mid] || lineHeight);
+    if (offsetY < top) {
+      high = mid - 1;
+    } else if (offsetY >= bottom) {
+      low = mid + 1;
+    } else {
+      return mid;
+    }
+  }
+
+  return Math.max(0, Math.min(tops.length - 1, low));
 }
 
 function getEditorLinePrefixWidths(editor, line) {
@@ -1127,7 +1319,10 @@ function centerEditorSelection(editor, start, end = start, lineHeight = 20) {
     ? getEditorColumnsWidth(editor, lines[startPos.lineIndex] || '', startPos.column, endPos.column)
     : 1;
 
-  const targetTop = (focusLine * lineHeight) - Math.max(0, (editor.clientHeight - lineHeight) / 2);
+  const wrapLayout = getEditorWrappedLineLayout(editor, lineHeight);
+  const visualLineTop = wrapLayout ? (wrapLayout.tops[focusLine] || 0) : (focusLine * lineHeight);
+  const visualLineHeight = wrapLayout ? (wrapLayout.heights[focusLine] || lineHeight) : lineHeight;
+  const targetTop = visualLineTop - Math.max(0, (editor.clientHeight - visualLineHeight) / 2);
   editor.scrollTop = Math.max(0, targetTop);
 
   if (editor.classList.contains('wrap-enabled')) return;
@@ -1151,7 +1346,7 @@ function getMouseRowCol(editor, event, lineHeight) {
 
   const contentX = event.clientX - rect.left + editor.scrollLeft - paddingLeft;
   const contentY = event.clientY - rect.top + editor.scrollTop - paddingTop;
-  const row = Math.max(0, Math.min(lines.length - 1, Math.floor(contentY / lineHeight)));
+  const row = Math.max(0, Math.min(lines.length - 1, findEditorRowAtVerticalOffset(editor, contentY, lineHeight)));
   const line = lines[row] || '';
   const col = getEditorColumnFromOffset(editor, line, Math.max(0, contentX));
 
@@ -1500,11 +1695,12 @@ function renderBlockSelection(editor, overlay, selection, lineHeight) {
     const rect = document.createElement('div');
     const width = Math.max(2, getEditorColumnsWidth(editor, range.line, range.startCol, range.endCol));
     const left = paddingLeft + getEditorColumnOffset(editor, range.line, range.startCol) - editor.scrollLeft;
+    const visual = getEditorVisualLineMetrics(editor, range.row, lineHeight);
     rect.className = 'editor-block-selection-rect';
     rect.style.left = `${left}px`;
-    rect.style.top = `${paddingTop + (range.row * lineHeight) - editor.scrollTop}px`;
+    rect.style.top = `${paddingTop + visual.top - editor.scrollTop}px`;
     rect.style.width = `${width}px`;
-    rect.style.height = `${lineHeight}px`;
+    rect.style.height = `${visual.height}px`;
     overlay.appendChild(rect);
   }
 }
