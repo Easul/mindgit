@@ -47,9 +47,10 @@ function setupEditorShortcuts(editor) {
     const paddingLeft = parseFloat(style.paddingLeft) || 0;
     const paddingTop = parseFloat(style.paddingTop) || 0;
     const charWidth = getEditorCharWidth(editor);
-    const left = paddingLeft + (start.column * charWidth) - editor.scrollLeft;
+    const line = lines[start.lineIndex] || '';
+    const left = paddingLeft + getEditorColumnOffset(editor, line, start.column) - editor.scrollLeft;
     const top = paddingTop + (start.lineIndex * LINE_HEIGHT) - editor.scrollTop;
-    const width = Math.max(charWidth, (end.column - start.column) * charWidth);
+    const width = Math.max(charWidth, getEditorColumnsWidth(editor, line, start.column, end.column));
 
     linkHintOverlay.style.left = `${left}px`;
     linkHintOverlay.style.top = `${top}px`;
@@ -247,6 +248,7 @@ function setupEditorShortcuts(editor) {
     if (!editor._mindgitPreserveBlockSelection) {
       clearBlockSelection();
     }
+    clearEditorMeasurementCache(editor);
   });
   editor.addEventListener('keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
@@ -322,6 +324,9 @@ function setupEditorShortcuts(editor) {
   editor._mindgitCleanup = () => {
     linkHintAbort.abort();
     hideEditorLinkHint();
+    editor._mindgitMeasurementLayer?.root?.remove();
+    editor._mindgitMeasurementLayer = null;
+    clearEditorMeasurementCache(editor);
   };
 
   editor.addEventListener('beforeinput', (event) => {
@@ -447,7 +452,9 @@ function setupEditorShortcuts(editor) {
       e.preventDefault();
       const nextSelection = e.shiftKey
         ? moveBlockSelectionFocusWithCtrl(editor, blockSelection, e.key)
-        : moveBlockSelection(editor, blockSelection, e.key);
+        : ['ArrowLeft', 'ArrowRight'].includes(e.key)
+          ? moveBlockCaretsWithCtrl(editor, blockSelection, e.key)
+          : moveBlockSelection(editor, blockSelection, e.key);
       if (nextSelection) {
         setBlockSelection(nextSelection);
       }
@@ -970,6 +977,115 @@ function createEditorLinkHintOverlay(editor) {
   return overlay;
 }
 
+function clearEditorMeasurementCache(editor) {
+  editor._mindgitPrefixWidthCache = new Map();
+}
+
+function getEditorMeasurementLayer(editor) {
+  const style = getComputedStyle(editor);
+  const signature = `${style.font}|${style.letterSpacing}|${style.tabSize}`;
+  let layer = editor._mindgitMeasurementLayer;
+
+  if (!layer || layer.signature !== signature || !layer.root?.isConnected) {
+    layer?.root?.remove();
+
+    const root = document.createElement('div');
+    root.style.position = 'fixed';
+    root.style.left = '-99999px';
+    root.style.top = '0';
+    root.style.visibility = 'hidden';
+    root.style.pointerEvents = 'none';
+    root.style.whiteSpace = 'pre';
+    root.style.margin = '0';
+    root.style.padding = '0';
+    root.style.border = '0';
+    root.style.font = style.font;
+    root.style.letterSpacing = style.letterSpacing;
+    root.style.lineHeight = style.lineHeight;
+    root.style.tabSize = style.tabSize;
+    root.style.fontKerning = style.fontKerning;
+    root.style.fontFeatureSettings = style.fontFeatureSettings;
+    root.style.fontVariantLigatures = style.fontVariantLigatures;
+
+    const span = document.createElement('span');
+    const textNode = document.createTextNode('');
+    span.appendChild(textNode);
+    root.appendChild(span);
+    document.body.appendChild(root);
+
+    layer = {
+      signature,
+      root,
+      textNode,
+      range: document.createRange(),
+    };
+    editor._mindgitMeasurementLayer = layer;
+    clearEditorMeasurementCache(editor);
+  }
+
+  return layer;
+}
+
+function getEditorLinePrefixWidths(editor, line) {
+  const cache = editor._mindgitPrefixWidthCache || (editor._mindgitPrefixWidthCache = new Map());
+  const key = line ?? '';
+  if (cache.has(key)) {
+    return cache.get(key);
+  }
+
+  const layer = getEditorMeasurementLayer(editor);
+  const text = key || ' ';
+  layer.textNode.data = text;
+
+  const prefixWidths = new Array(key.length + 1);
+  prefixWidths[0] = 0;
+
+  for (let i = 1; i <= key.length; i++) {
+    layer.range.setStart(layer.textNode, 0);
+    layer.range.setEnd(layer.textNode, i);
+    prefixWidths[i] = layer.range.getBoundingClientRect().width;
+  }
+
+  cache.set(key, prefixWidths);
+  return prefixWidths;
+}
+
+function getEditorColumnOffset(editor, line, col) {
+  const prefixWidths = getEditorLinePrefixWidths(editor, line);
+  const nextCol = Math.max(0, Math.min(col, prefixWidths.length - 1));
+  return prefixWidths[nextCol] || 0;
+}
+
+function getEditorColumnsWidth(editor, line, startCol, endCol) {
+  const start = Math.max(0, Math.min(startCol, line.length));
+  const end = Math.max(0, Math.min(endCol, line.length));
+  return Math.abs(getEditorColumnOffset(editor, line, end) - getEditorColumnOffset(editor, line, start));
+}
+
+function getEditorColumnFromOffset(editor, line, offset) {
+  if (!line) return 0;
+
+  const prefixWidths = getEditorLinePrefixWidths(editor, line);
+  const maxWidth = prefixWidths[prefixWidths.length - 1] || 0;
+  if (offset <= 0) return 0;
+  if (offset >= maxWidth) return line.length;
+
+  let low = 0;
+  let high = prefixWidths.length - 1;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (prefixWidths[mid] < offset) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+
+  const next = low;
+  const prev = Math.max(0, next - 1);
+  return Math.abs(prefixWidths[next] - offset) <= Math.abs(offset - prefixWidths[prev]) ? next : prev;
+}
+
 function getEditorCharWidth(editor) {
   if (editor._mindgitCharWidth) return editor._mindgitCharWidth;
 
@@ -1008,7 +1124,7 @@ function centerEditorSelection(editor, start, end = start, lineHeight = 20) {
   const focusLine = startPos.lineIndex;
   const focusColumn = startPos.column;
   const selectionColumns = endPos.lineIndex === startPos.lineIndex
-    ? Math.max(1, endPos.column - startPos.column)
+    ? getEditorColumnsWidth(editor, lines[startPos.lineIndex] || '', startPos.column, endPos.column)
     : 1;
 
   const targetTop = (focusLine * lineHeight) - Math.max(0, (editor.clientHeight - lineHeight) / 2);
@@ -1019,8 +1135,10 @@ function centerEditorSelection(editor, start, end = start, lineHeight = 20) {
   const style = getComputedStyle(editor);
   const paddingLeft = parseFloat(style.paddingLeft) || 0;
   const charWidth = getEditorCharWidth(editor);
-  const focusWidth = Math.max(charWidth, selectionColumns * charWidth);
-  const targetLeft = paddingLeft + (focusColumn * charWidth) - Math.max(0, (editor.clientWidth - focusWidth) / 2);
+  const line = lines[focusLine] || '';
+  const focusWidth = Math.max(charWidth, selectionColumns);
+  const targetLeft = paddingLeft + getEditorColumnOffset(editor, line, focusColumn)
+    - Math.max(0, (editor.clientWidth - focusWidth) / 2);
   editor.scrollLeft = Math.max(0, targetLeft);
 }
 
@@ -1029,13 +1147,13 @@ function getMouseRowCol(editor, event, lineHeight) {
   const style = getComputedStyle(editor);
   const paddingLeft = parseFloat(style.paddingLeft) || 0;
   const paddingTop = parseFloat(style.paddingTop) || 0;
-  const charWidth = getEditorCharWidth(editor);
   const lines = splitEditorLines(editor.value);
 
   const contentX = event.clientX - rect.left + editor.scrollLeft - paddingLeft;
   const contentY = event.clientY - rect.top + editor.scrollTop - paddingTop;
   const row = Math.max(0, Math.min(lines.length - 1, Math.floor(contentY / lineHeight)));
-  const col = Math.max(0, Math.round(contentX / charWidth));
+  const line = lines[row] || '';
+  const col = getEditorColumnFromOffset(editor, line, Math.max(0, contentX));
 
   return { row, col };
 }
@@ -1239,22 +1357,10 @@ function moveBlockSelection(editor, selection, key) {
 }
 
 function moveBlockSelectionFocusWithCtrl(editor, selection, key) {
-  if (selection?.anchor && selection?.focus && !Array.isArray(selection.ranges)) {
-    if (key === 'ArrowUp' || key === 'ArrowDown') {
+  if (key === 'ArrowUp' || key === 'ArrowDown') {
+    if (selection?.anchor && selection?.focus && !Array.isArray(selection.ranges)) {
       return createColumnBlockSelection(selection.anchor, moveBlockFocus(editor, selection.focus, key));
     }
-
-    const lines = splitEditorLines(editor.value);
-    const line = lines[selection.focus.row] || '';
-    return createColumnBlockSelection(selection.anchor, {
-      row: selection.focus.row,
-      col: key === 'ArrowLeft'
-        ? getPreviousWordBoundary(line, selection.focus.col)
-        : getNextWordBoundary(line, selection.focus.col),
-      });
-  }
-
-  if (key === 'ArrowUp' || key === 'ArrowDown') {
     return moveBlockSelection(editor, selection, key);
   }
 
@@ -1267,6 +1373,49 @@ function moveBlockSelectionFocusWithCtrl(editor, selection, key) {
         ? getPreviousWordBoundary(range.line, range.focusCol)
         : getNextWordBoundary(range.line, range.focusCol),
     })),
+    focusIndex: getBlockSelectionFocusIndex(selection, ranges),
+  };
+}
+
+function moveBlockCaretsWithCtrl(editor, selection, key) {
+  if (key === 'ArrowUp' || key === 'ArrowDown') {
+    return moveBlockSelection(editor, selection, key);
+  }
+
+  const ranges = getBlockSelectionRanges(editor, selection);
+  const lines = splitEditorLines(editor.value);
+  return {
+    ranges: ranges.map((range) => {
+      if (key === 'ArrowLeft' && range.focusCol === 0) {
+        const previousRow = Math.max(0, range.row - 1);
+        const previousLine = lines[previousRow] || '';
+        const previousCol = range.row > 0 ? previousLine.length : 0;
+        return {
+          row: previousRow,
+          anchorCol: previousCol,
+          focusCol: previousCol,
+        };
+      }
+
+      if (key === 'ArrowRight' && range.focusCol >= range.line.length) {
+        const nextRow = Math.min(lines.length - 1, range.row + 1);
+        const nextCol = range.row < lines.length - 1 ? 0 : range.line.length;
+        return {
+          row: nextRow,
+          anchorCol: nextCol,
+          focusCol: nextCol,
+        };
+      }
+
+      const nextCol = key === 'ArrowLeft'
+        ? getPreviousWordBoundary(range.line, range.focusCol)
+        : getNextWordBoundary(range.line, range.focusCol);
+      return {
+        row: range.row,
+        anchorCol: nextCol,
+        focusCol: nextCol,
+      };
+    }),
     focusIndex: getBlockSelectionFocusIndex(selection, ranges),
   };
 }
@@ -1346,12 +1495,11 @@ function renderBlockSelection(editor, overlay, selection, lineHeight) {
   const style = getComputedStyle(editor);
   const paddingLeft = parseFloat(style.paddingLeft) || 0;
   const paddingTop = parseFloat(style.paddingTop) || 0;
-  const charWidth = getEditorCharWidth(editor);
 
   for (const range of ranges) {
     const rect = document.createElement('div');
-    const width = Math.max(2, (range.endCol - range.startCol) * charWidth);
-    const left = paddingLeft + (range.startCol * charWidth) - editor.scrollLeft;
+    const width = Math.max(2, getEditorColumnsWidth(editor, range.line, range.startCol, range.endCol));
+    const left = paddingLeft + getEditorColumnOffset(editor, range.line, range.startCol) - editor.scrollLeft;
     rect.className = 'editor-block-selection-rect';
     rect.style.left = `${left}px`;
     rect.style.top = `${paddingTop + (range.row * lineHeight) - editor.scrollTop}px`;
