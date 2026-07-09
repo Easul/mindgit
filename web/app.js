@@ -47,6 +47,7 @@ const state = {
   wordWrap: localStorage.getItem('mindgit-wordwrap') === 'true',
   openTabs: [],
   tabStates: {},
+  tabDrafts: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -171,6 +172,7 @@ function applyProjectWorkspace(projectKey) {
   state.mobileViewerExpanded = saved.mobileViewerExpanded;
   state.openTabs = saved.openTabs;
   state.tabStates = saved.tabStates;
+  state.tabDrafts = {};
   state.expandedGroups = new Set(saved.expandedGroups);
   state.splitPane = saved.splitPane;
   state.children = new Map();
@@ -278,6 +280,7 @@ function applyExternalFileContent(path, content) {
   if (!path || state.selected !== path) return;
 
   state.content = content;
+  state.tabDrafts[path] = content;
   const editor = $('editor');
   if (editor) {
     if (editor.value === content) return;
@@ -801,6 +804,7 @@ async function applyEmbedState(payload = {}) {
     state.commitFiles = [];
     state.selectedCommitFile = null;
     state.tabStates = {};
+    state.tabDrafts = {};
     updateProjectSwitcher();
   }
 

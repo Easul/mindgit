@@ -32,7 +32,7 @@ async function renderStructuredFull(path) {
   }
 }
 
-async function renderStructuredEdit(path) {
+async function renderStructuredEdit(path, draftContent = null) {
   if (isXmindFile(path)) {
     $('viewer').innerHTML = `<div class="binary-notice"><div><strong>Read Only</strong><p>XMind files can be browsed, but editing is not supported.</p></div></div>`;
     state.editorReady = false;
@@ -40,12 +40,12 @@ async function renderStructuredEdit(path) {
     return;
   }
 
-  const data = await api(`/api/file?path=${encodeURIComponent(path)}`);
-  state.content = data.content;
+  const content = draftContent ?? (await api(`/api/file?path=${encodeURIComponent(path)}`)).content;
+  state.content = content;
   if (isDrawioFile(path)) {
-    renderDrawioViewer(data.content, path, true);
+    renderDrawioViewer(content, path, true);
   } else {
-    renderKmViewer(data.content, path, true);
+    renderKmViewer(content, path, true);
   }
   state.editorReady = true;
   updateEditButton('Save', { disabled: state.saveInProgress, primary: true });

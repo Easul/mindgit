@@ -10,10 +10,19 @@ It opens directly on uncommitted Git changes and combines a source-control style
 - Groups changed files by directory with collapsible sections
 - Displays per-file diffs with additions and deletions
 - Supports quick single-file editing and save-back to disk
+- Supports editor tabs with per-tab draft retention and UI state restore
+- Supports split-pane review, history view, and per-file mode switching
+- Includes built-in find/replace, go-to-line, and multi-cursor block editing
 - Refreshes Git status and diff after saving
 - Includes `rg`-powered search
 - Supports dark and light themes with local persistence
 - Supports configurable project directory, bind address, and port
+
+## User guide
+
+For the current browser features, editor behavior, and built-in keyboard shortcuts, see:
+
+- [docs/editor-guide.md](docs/editor-guide.md)
 
 ## Install from source
 

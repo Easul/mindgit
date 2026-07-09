@@ -159,6 +159,7 @@ function closeTab(path) {
 
   state.openTabs.splice(index, 1);
   delete state.tabStates[path];
+  delete state.tabDrafts[path];
 
   if (path === state.selected) {
     if (state.openTabs.length > 0) {
@@ -215,6 +216,15 @@ function saveCurrentTabState() {
     state.tabStates[state.selected].cursorEnd = editor.selectionEnd;
     state.tabStates[state.selected].editorScrollTop = editor.scrollTop;
     state.tabStates[state.selected].editorScrollLeft = editor.scrollLeft;
+    state.tabStates[state.selected].editorCommandState = captureEditorCommandState(editor);
+  }
+
+  if (state.mode === 'edit') {
+    const structuredContent = structuredEditorContent();
+    const draftContent = structuredContent !== null ? structuredContent : editor?.value;
+    if (typeof draftContent === 'string') {
+      state.tabDrafts[state.selected] = draftContent;
+    }
   }
 
   const imageViewer = viewer?.querySelector('.image-viewer');
@@ -254,6 +264,7 @@ function restoreTabState(path) {
         editor.scrollTop = savedState.editorScrollTop;
         editor.scrollLeft = savedState.editorScrollLeft;
       }
+      restoreEditorCommandState(editor, savedState.editorCommandState);
       editor.focus();
     }
 
@@ -523,6 +534,9 @@ async function deletePath(path, isDir) {
     state.openTabs = state.openTabs.filter((tab) => !isPathInside(tab, path));
     for (const tabPath of Object.keys(state.tabStates)) {
       if (isPathInside(tabPath, path)) delete state.tabStates[tabPath];
+    }
+    for (const tabPath of Object.keys(state.tabDrafts)) {
+      if (isPathInside(tabPath, path)) delete state.tabDrafts[tabPath];
     }
     state.expandedGroups = new Set([...state.expandedGroups].filter((group) => !isPathInside(group, path)));
     for (const group of [...state.children.keys()]) {

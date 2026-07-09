@@ -825,6 +825,18 @@
         border-radius: 3px;
         box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent);
       }
+      .editor-find-match.zero-width,
+      .editor-find-match.linebreak {
+        display: inline-block;
+        min-width: 0.55em;
+        vertical-align: baseline;
+      }
+      .editor-find-boundary {
+        display: inline-block;
+        width: 100%;
+        min-width: 0.2em;
+        min-height: 1em;
+      }
       .editor-find-match.current {
         background: color-mix(in srgb, var(--blue) 26%, transparent);
         box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 70%, transparent);
@@ -879,7 +891,6 @@
         right: 18px;
         z-index: 8;
         display: grid;
-        grid-template-columns: minmax(120px, 180px) auto auto auto minmax(110px, 160px) auto auto 72px auto auto;
         align-items: center;
         gap: 5px;
         max-width: calc(100% - 36px);
@@ -889,26 +900,78 @@
         background: var(--panel);
         box-shadow: var(--shadow);
       }
+      .editor-command-bar-find {
+        grid-template-columns: minmax(120px, 180px) auto auto auto auto minmax(140px, 180px) auto auto auto;
+      }
+      .editor-command-bar-line {
+        top: 8px;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        grid-template-columns: minmax(120px, 160px) auto auto;
+      }
       .editor-command-bar[hidden] { display: none; }
-      .editor-command-bar input {
+      .editor-command-field {
         min-width: 0;
-        height: 28px;
-        padding: 4px 7px;
+        padding: 6px 9px;
         border-radius: 4px;
         font-size: 12px;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        outline: none;
+        box-shadow: none;
+        transition: border-color 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+      }
+      .editor-command-field:focus {
+        border-color: color-mix(in srgb, var(--blue) 70%, var(--line));
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 16%, transparent);
+        background: color-mix(in srgb, var(--surface) 84%, var(--panel));
+      }
+      .editor-command-bar input.editor-command-field {
+        height: 32px;
+      }
+      .editor-command-bar textarea.editor-command-field {
+        min-width: 0;
+        height: 32px;
+        line-height: 18px;
+        resize: none;
+        overflow-y: auto;
+        overflow-x: hidden;
       }
       .editor-command-bar button {
-        height: 28px;
+        height: 32px;
         padding: 4px 7px;
         border-radius: 4px;
         font-size: 12px;
         white-space: nowrap;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+      }
+      .editor-command-bar button:hover {
+        background: color-mix(in srgb, var(--surface) 82%, var(--panel));
+        border-color: color-mix(in srgb, var(--line) 70%, var(--blue));
+      }
+      .editor-command-regex {
+        color: var(--muted);
+        background: color-mix(in srgb, var(--surface) 88%, var(--panel));
+        border-color: color-mix(in srgb, var(--line) 72%, transparent);
+      }
+      .editor-command-bar button.active {
+        background: var(--blue);
+        border-color: var(--blue);
+        color: #fff;
       }
       .editor-command-count {
         min-width: 38px;
         color: var(--muted);
         font-size: 12px;
         text-align: center;
+      }
+      .editor-command-count.invalid {
+        color: var(--danger);
       }
       .line-numbers {
         float: left;
@@ -1513,8 +1576,14 @@
           display: flex;
           flex-wrap: wrap;
         }
-        .editor-command-bar input {
+        .editor-command-bar input.editor-command-field {
           flex: 1 1 120px;
+        }
+        .editor-command-bar textarea.editor-command-field {
+          flex: 1 1 120px;
+        }
+        .editor-command-bar-line {
+          top: 8px;
         }
         .empty { min-height: 220px; }
         :root[data-viewer-open="true"][data-mobile-expanded="true"] .app {

@@ -53,6 +53,9 @@ function attachScrollableInteractionTarget(scrollTarget) {
 async function renderSelected() {
   if (!state.selected) return;
   cleanupViewerArtifacts();
+  const draftContent = typeof state.tabDrafts[state.selected] === 'string'
+    ? state.tabDrafts[state.selected]
+    : null;
 
   const file = state.status.files.find((item) => item.path === state.selected);
   if ($('review-summary')) {
@@ -69,7 +72,7 @@ async function renderSelected() {
     if (isStructured) {
       state.editorReady = false;
       updateEditButton('Loading...', { disabled: true, primary: true });
-      await renderStructuredEdit(state.selected);
+      await renderStructuredEdit(state.selected, draftContent);
       return;
     }
 
@@ -82,9 +85,9 @@ async function renderSelected() {
 
     state.editorReady = false;
     updateEditButton('Loading...', { disabled: true, primary: true });
-    const data = await api(`/api/file?path=${encodeURIComponent(state.selected)}`);
-    state.content = data.content;
-    const lineNumbers = renderLineNumberSpans(splitEditorLines(data.content).length, 'editor-line-num');
+    const content = draftContent ?? (await api(`/api/file?path=${encodeURIComponent(state.selected)}`)).content;
+    state.content = content;
+    const lineNumbers = renderLineNumberSpans(splitEditorLines(content).length, 'editor-line-num');
 
     $('viewer').innerHTML = `<div class="editor-wrapper">
       <div class="editor-line-gutter" id="editor-line-gutter">
@@ -98,7 +101,7 @@ async function renderSelected() {
     </div>`;
 
     const editor = $('editor');
-    editor.value = data.content;
+    editor.value = content;
 
     editor.focus();
     setupEditorShortcuts(editor);
@@ -322,6 +325,7 @@ async function saveFile() {
     });
 
     state.content = content;
+    state.tabDrafts[state.selected] = content;
     state.status = status;
     await refreshLoadedGroups();
     renderStatus();
