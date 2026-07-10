@@ -1410,6 +1410,9 @@
 
       .review-body { padding: 14px; }
       .card {
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px;
@@ -1418,7 +1421,13 @@
         box-shadow: var(--shadow);
       }
       .card h3 { margin: 0 0 8px; font-size: 14px; }
-      .card p { margin: 6px 0; color: var(--muted); }
+      .card p {
+        max-width: 100%;
+        margin: 6px 0;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        color: var(--muted);
+      }
       .search-results button {
         display: block;
         width: 100%;

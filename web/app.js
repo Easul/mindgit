@@ -495,7 +495,7 @@ function syncLayoutState() {
   ) ? 'true' : 'false';
   document.documentElement.dataset.mobileExpanded = state.mobileViewerExpanded ? 'true' : 'false';
   document.documentElement.dataset.embed = state.embed ? 'true' : 'false';
-  document.documentElement.dataset.splitOpen = state.splitPane.open ? 'true' : 'false';
+  document.documentElement.dataset.splitOpen = state.view === 'worktree' && state.splitPane.open ? 'true' : 'false';
   document.documentElement.dataset.splitOrientation = state.splitPane.orientation;
   syncViewerHeight();
 
@@ -520,6 +520,10 @@ async function api(path, options) {
 
 async function setView(view) {
   if (state.view === view) return;
+  if (view === 'history' && state.status && !state.status.gitAvailable) {
+    setMessage('Git not available for this folder', 'error');
+    return;
+  }
   if (state.view === 'worktree') {
     saveCurrentTabState();
   }
@@ -543,6 +547,19 @@ async function refresh() {
     if ($('worktree-view')) $('worktree-view').classList.toggle('active', state.view === 'worktree');
     if ($('history-view')) $('history-view').classList.toggle('active', state.view === 'history');
     if (state.view === 'history') {
+      state.status = await api('/api/status');
+      if (!state.status.gitAvailable) {
+        state.view = 'worktree';
+        state.selectedCommit = null;
+        state.commitFiles = [];
+        state.selectedCommitFile = null;
+        renderStatus();
+        renderFileTabs();
+        syncLayoutState();
+        renderSplitPane();
+        setMessage('Git not available for this folder', 'error');
+        return;
+      }
       await loadHistory();
       renderHistory();
       renderSplitPane();
@@ -556,7 +573,7 @@ async function refresh() {
     if (state.selected) {
       await renderSelected();
     } else {
-      $('viewer').innerHTML = `<div class="empty">${state.status.files.length ? 'Expand a directory and select a changed file' : 'Working tree clean'}</div>`;
+      $('viewer').innerHTML = `<div class="empty">${state.status.files.length ? 'Select a file from the tree' : 'Folder is empty'}</div>`;
     }
     renderSplitPane();
     setMessage('Updated', 'ok');
@@ -602,7 +619,12 @@ function renderStatus() {
   if ($('added')) $('added').textContent = status.added + status.untracked;
   if ($('deleted')) $('deleted').textContent = status.deleted;
   if ($('lines')) $('lines').textContent = `+${status.additions} -${status.deletions}`;
-  if ($('change-title')) $('change-title').textContent = `Changes (${status.modified + status.added + status.deleted + status.untracked})`;
+  if ($('change-title')) {
+    $('change-title').textContent = status.gitAvailable
+      ? `Changes (${status.modified + status.added + status.deleted + status.untracked})`
+      : 'Files';
+  }
+  if ($('history-view')) $('history-view').disabled = !status.gitAvailable;
 
   if ($('file-list')) {
     $('file-list').innerHTML = renderEntries(status.files, 0);
@@ -917,8 +939,8 @@ function renderSplitPane() {
 
   const splitVisible = state.view === 'worktree' && state.splitPane.open;
   area.classList.toggle('split-open', splitVisible);
-  area.classList.toggle('split-right', state.splitPane.open && state.splitPane.orientation === 'right');
-  area.classList.toggle('split-down', state.splitPane.open && state.splitPane.orientation === 'down');
+  area.classList.toggle('split-right', splitVisible && state.splitPane.orientation === 'right');
+  area.classList.toggle('split-down', splitVisible && state.splitPane.orientation === 'down');
 
   if (!splitVisible || !state.splitPane.selectedPath) {
     cleanupSplitPaneResizeObserver();

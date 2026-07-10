@@ -1,12 +1,80 @@
 async function refreshLoadedGroups() {
   const groups = [...state.expandedGroups].filter(Boolean);
-  const refreshed = await Promise.all(groups.map(async (group) => {
-    const data = await api(`/api/tree?path=${encodeURIComponent(group)}`);
-    return [group, data.files];
-  }));
-  for (const [group, files] of refreshed) {
-    state.children.set(group, files);
+  if (groups.length === 0) return;
+
+  try {
+    const refreshed = await loadTreePaths(groups);
+    for (const [group, files] of refreshed) {
+      state.children.set(group, files);
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+
+    for (const group of groups) {
+      try {
+        const refreshed = await loadTreePaths([group]);
+        state.children.set(group, refreshed.get(group) || []);
+      } catch (groupError) {
+        if (!isMissingPathError(groupError)) throw groupError;
+        removeUnavailablePath(group);
+      }
+    }
   }
+}
+
+function isMissingPathError(error) {
+  return /no such file|not exist|cannot find/i.test(error?.message || '');
+}
+
+function removeUnavailablePath(path) {
+  const isUnavailable = (candidate) => candidate && isPathInside(candidate, path);
+
+  state.openTabs = state.openTabs.filter((tabPath) => !isUnavailable(tabPath));
+  for (const tabPath of Object.keys(state.tabStates)) {
+    if (isUnavailable(tabPath)) delete state.tabStates[tabPath];
+  }
+  for (const tabPath of Object.keys(state.tabDrafts)) {
+    if (isUnavailable(tabPath)) delete state.tabDrafts[tabPath];
+  }
+  for (const group of [...state.expandedGroups]) {
+    if (isUnavailable(group)) state.expandedGroups.delete(group);
+  }
+  for (const group of [...state.children.keys()]) {
+    if (isUnavailable(group)) state.children.delete(group);
+  }
+
+  if (isUnavailable(state.selected)) {
+    state.selected = null;
+    state.mode = 'full';
+    state.mobileViewerExpanded = false;
+    state.editorReady = false;
+  }
+
+  state.splitPane.tabs = state.splitPane.tabs.filter((tabPath) => !isUnavailable(tabPath));
+  if (isUnavailable(state.splitPane.selectedPath)) {
+    state.splitPane.selectedPath = state.splitPane.tabs[0] || '';
+  }
+  if (!state.splitPane.selectedPath) {
+    state.splitPane.open = false;
+    state.splitPane.tabs = [];
+  }
+
+  saveWorkspaceState();
+  notifyEmbedState();
+}
+
+async function loadTreePaths(paths) {
+  const unique = [...new Set(paths.filter((path) => typeof path === 'string'))];
+  if (unique.length === 0) return new Map();
+
+  const params = new URLSearchParams();
+  for (const path of unique) {
+    params.append('path', path);
+  }
+
+  const response = await api(`/api/tree-batch?${params.toString()}`);
+
+  return new Map((response.trees || []).map((tree) => [tree.path, tree.files || []]));
 }
 
 function renderEntries(entries, depth) {
@@ -88,8 +156,8 @@ async function handleTreeClick(event) {
       state.expandedGroups.delete(dir);
     } else {
       if (!state.children.has(dir)) {
-        const data = await api(`/api/tree?path=${encodeURIComponent(dir)}`);
-        state.children.set(dir, data.files);
+        const trees = await loadTreePaths([dir]);
+        state.children.set(dir, trees.get(dir) || []);
       }
       state.expandedGroups.add(dir);
     }
@@ -284,29 +352,50 @@ function restoreTabState(path) {
 async function selectFile(path, options = {}) {
   saveCurrentTabState();
 
-  if (!state.status) {
-    state.status = await api('/api/status');
-  }
+  try {
+    if (!state.status) {
+      state.status = await api('/api/status');
+    }
 
-  if (!state.openTabs.includes(path)) {
-    state.openTabs.push(path);
-  }
+    if (!state.openTabs.includes(path)) {
+      state.openTabs.push(path);
+    }
 
-  state.selected = path;
-  const savedState = options.restoreState === false ? null : state.tabStates[path];
-  state.mode = options.mode || savedState?.mode || 'full';
-  state.mobileViewerExpanded = Boolean(options.mobileViewerExpanded ?? state.mobileViewerExpanded);
-  state.editorReady = false;
-  await ensurePathVisible(path);
-  syncLayoutState();
-  renderStatus();
-  renderFileTabs();
-  await renderSelected();
-  if (options.restoreState !== false) {
-    restoreTabState(path);
+    state.selected = path;
+    const savedState = options.restoreState === false ? null : state.tabStates[path];
+    state.mode = options.mode || savedState?.mode || 'full';
+    state.mobileViewerExpanded = Boolean(options.mobileViewerExpanded ?? state.mobileViewerExpanded);
+    state.editorReady = false;
+    await ensurePathVisible(path);
+    syncLayoutState();
+    renderStatus();
+    renderFileTabs();
+    await renderSelected();
+    if (options.restoreState !== false) {
+      restoreTabState(path);
+    }
+    saveWorkspaceState();
+    notifyEmbedState();
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+
+    removeUnavailablePath(path);
+    const fallbackPath = state.openTabs[0] || '';
+    if (fallbackPath) {
+      await selectFile(fallbackPath);
+      return;
+    }
+
+    syncLayoutState();
+    renderFileTabs();
+    renderSplitPane();
+    $('viewer').innerHTML = '<div class="empty">No file selected</div>';
+    if ($('review-summary')) {
+      $('review-summary').textContent = '选择文件后，这里会显示变更摘要、风险提示和快速操作入口。';
+    }
+    saveWorkspaceState();
+    notifyEmbedState();
   }
-  saveWorkspaceState();
-  notifyEmbedState();
 }
 
 function groupForPath(path) {
@@ -323,11 +412,18 @@ function ancestorPaths(path) {
 }
 
 async function ensurePathVisible(path) {
+  const missingAncestors = [];
   for (const ancestor of ancestorPaths(path)) {
     state.expandedGroups.add(ancestor);
     if (!state.children.has(ancestor)) {
-      const data = await api(`/api/tree?path=${encodeURIComponent(ancestor)}`);
-      state.children.set(ancestor, data.files);
+      missingAncestors.push(ancestor);
+    }
+  }
+
+  if (missingAncestors.length > 0) {
+    const trees = await loadTreePaths(missingAncestors);
+    for (const ancestor of missingAncestors) {
+      state.children.set(ancestor, trees.get(ancestor) || []);
     }
   }
 }
@@ -358,8 +454,14 @@ function isMobileLayout() {
 function openTabMenu(anchor, path) {
   const mode = currentModeForPath(path);
   const isLiveEdit = path === state.selected && state.mode === 'edit';
+  const gitAvailable = state.status?.gitAvailable !== false;
   const items = [
-    { label: 'Diff', active: mode === 'diff', action: () => setTabMode(path, 'diff') },
+    {
+      label: 'Diff',
+      active: mode === 'diff',
+      disabled: !gitAvailable,
+      action: () => setTabMode(path, 'diff'),
+    },
     { label: 'Full', active: mode === 'full', action: () => setTabMode(path, 'full') },
     {
       label: isLiveEdit ? 'Save' : 'Edit',
@@ -447,6 +549,13 @@ function openTreeMenu(anchor, path, kind) {
     { label: 'New File', action: () => promptCreatePath(basePath, 'file') },
     { label: 'New Folder', action: () => promptCreatePath(basePath, 'dir') },
   ];
+
+  if (kind === 'file' && path) {
+    items.push(
+      { separator: true },
+      { label: 'Download', action: () => downloadFile(path) },
+    );
+  }
 
   if (path) {
     items.push(
@@ -579,4 +688,20 @@ async function deletePath(path, isDir) {
 
 function isPathInside(path, target) {
   return path === target || path.startsWith(`${target}/`);
+}
+
+function downloadFile(path) {
+  const url = new URL('/api/download', window.location.origin);
+  if (state.currentProjectKey) {
+    url.searchParams.set('project', state.currentProjectKey);
+  }
+  url.searchParams.set('path', path);
+
+  const anchor = document.createElement('a');
+  anchor.href = `${url.pathname}${url.search}`;
+  anchor.download = displayName(path);
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setMessage('Download started', 'ok');
 }

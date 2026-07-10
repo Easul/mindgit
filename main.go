@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -71,16 +72,17 @@ type ChangedFile struct {
 }
 
 type StatusResponse struct {
-	Project   ProjectSummary `json:"project"`
-	Root      string         `json:"root"`
-	Branch    string         `json:"branch"`
-	Files     []ChangedFile  `json:"files"`
-	Modified  int            `json:"modified"`
-	Added     int            `json:"added"`
-	Deleted   int            `json:"deleted"`
-	Untracked int            `json:"untracked"`
-	Additions int            `json:"additions"`
-	Deletions int            `json:"deletions"`
+	Project      ProjectSummary `json:"project"`
+	Root         string         `json:"root"`
+	Branch       string         `json:"branch"`
+	GitAvailable bool           `json:"gitAvailable"`
+	Files        []ChangedFile  `json:"files"`
+	Modified     int            `json:"modified"`
+	Added        int            `json:"added"`
+	Deleted      int            `json:"deleted"`
+	Untracked    int            `json:"untracked"`
+	Additions    int            `json:"additions"`
+	Deletions    int            `json:"deletions"`
 }
 
 type DiffResponse struct {
@@ -129,6 +131,14 @@ type TreeResponse struct {
 	Files []ChangedFile `json:"files"`
 }
 
+type TreeBatchRequest struct {
+	Paths []string `json:"paths"`
+}
+
+type TreeBatchResponse struct {
+	Trees []TreeResponse `json:"trees"`
+}
+
 type CommitSummary struct {
 	Hash      string `json:"hash"`
 	ShortHash string `json:"shortHash"`
@@ -170,6 +180,7 @@ func main() {
 	mux.HandleFunc("GET /api/status", app.handleStatus)
 	mux.HandleFunc("GET /api/diff", app.handleDiff)
 	mux.HandleFunc("GET /api/file", app.handleReadFile)
+	mux.HandleFunc("GET /api/download", app.handleDownload)
 	mux.HandleFunc("GET /api/xmind", app.handleXMindFile)
 	mux.HandleFunc("POST /api/file", app.handleSaveFile)
 	mux.HandleFunc("POST /api/fs", app.handleCreatePath)
@@ -177,6 +188,8 @@ func main() {
 	mux.HandleFunc("DELETE /api/stage", app.handleRestoreStaged)
 	mux.HandleFunc("GET /api/search", app.handleSearch)
 	mux.HandleFunc("GET /api/tree", app.handleTree)
+	mux.HandleFunc("GET /api/tree-batch", app.handleTreeBatch)
+	mux.HandleFunc("POST /api/tree-batch", app.handleTreeBatch)
 	mux.HandleFunc("GET /api/commits", app.handleCommits)
 	mux.HandleFunc("GET /api/commit", app.handleCommit)
 	mux.HandleFunc("GET /api/commit-diff", app.handleCommitDiff)
@@ -406,6 +419,54 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, FileResponse{Path: path, Content: string(content)}, nil)
 }
 
+func (a App) handleDownload(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	path, err := app.cleanPath(r.URL.Query().Get("path"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	fullPath := filepath.Join(app.root, path)
+	file, err := os.Open(fullPath)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if info.IsDir() {
+		writeJSON(w, nil, fmt.Errorf("cannot download directory: %s", path))
+		return
+	}
+
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
+	if contentType == "" {
+		header := make([]byte, 512)
+		n, _ := file.Read(header)
+		contentType = http.DetectContentType(header[:n])
+		if _, err := file.Seek(0, 0); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{
+		"filename": filepath.Base(path),
+	}))
+	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), file)
+}
+
 func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {
 	app, err := a.appForRequest(r)
 	if err != nil {
@@ -598,6 +659,7 @@ func (a App) search(query string) ([]SearchResult, error) {
 
 func (a App) searchWithGo(query string) ([]SearchResult, error) {
 	var results []SearchResult
+	gitAvailable := a.isGitRepository()
 	err := filepath.Walk(a.root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -618,7 +680,7 @@ func (a App) searchWithGo(query string) ([]SearchResult, error) {
 		if err != nil {
 			return nil
 		}
-		if a.isFileIgnored(relPath) {
+		if gitAvailable && a.isFileIgnored(relPath) {
 			return nil
 		}
 
@@ -684,14 +746,65 @@ func (a App) handleTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	changes, err := app.changes()
+	gitAvailable, changes, err := app.loadGitChanges()
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 
-	files, err := app.treeEntries(path, changes)
+	files, err := app.treeEntries(path, changes, gitAvailable)
 	writeJSON(w, TreeResponse{Path: path, Files: files}, err)
+}
+
+func (a App) handleTreeBatch(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	var req TreeBatchRequest
+	if r.Method == http.MethodGet {
+		req.Paths = r.URL.Query()["path"]
+	} else {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+	}
+
+	paths := make([]string, 0, len(req.Paths))
+	seen := make(map[string]bool, len(req.Paths))
+	for _, rawPath := range req.Paths {
+		path, err := app.cleanOptionalPath(rawPath)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+
+	gitAvailable, changes, err := app.loadGitChanges()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	trees := make([]TreeResponse, 0, len(paths))
+	for _, path := range paths {
+		files, err := app.treeEntries(path, changes, gitAvailable)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		trees = append(trees, TreeResponse{Path: path, Files: files})
+	}
+
+	writeJSON(w, TreeBatchResponse{Trees: trees}, nil)
 }
 
 func (a App) handleCommits(w http.ResponseWriter, r *http.Request) {
@@ -783,22 +896,35 @@ func (a App) handleCommitDiff(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a App) status() (StatusResponse, error) {
-	branch, err := a.currentBranch()
+	gitAvailable, files, err := a.loadGitChanges()
 	if err != nil {
 		return StatusResponse{}, err
 	}
 
-	files, err := a.changes()
+	branch := "No Git"
+	if gitAvailable {
+		branch, err = a.currentBranch()
+		if err != nil {
+			return StatusResponse{}, err
+		}
+	}
+
+	rootFiles, err := a.treeEntries("", files, gitAvailable)
 	if err != nil {
 		return StatusResponse{}, err
 	}
 
-	rootFiles, err := a.treeEntries("", files)
-	if err != nil {
-		return StatusResponse{}, err
+	response := StatusResponse{
+		Project:      a.currentProject(),
+		Root:         a.root,
+		Branch:       branch,
+		GitAvailable: gitAvailable,
+		Files:        rootFiles,
+	}
+	if !gitAvailable {
+		return response, nil
 	}
 
-	response := StatusResponse{Project: a.currentProject(), Root: a.root, Branch: branch, Files: rootFiles}
 	for _, file := range files {
 		if file.Ignored || file.Status == "" {
 			continue
@@ -818,6 +944,18 @@ func (a App) status() (StatusResponse, error) {
 	}
 
 	return response, nil
+}
+
+func (a App) loadGitChanges() (bool, []ChangedFile, error) {
+	if !a.isGitRepository() {
+		return false, nil, nil
+	}
+
+	files, err := a.changes()
+	if err != nil {
+		return false, nil, err
+	}
+	return true, files, nil
 }
 
 func (a App) changes() ([]ChangedFile, error) {
@@ -840,7 +978,7 @@ func (a App) changeMap(changes []ChangedFile) map[string]ChangedFile {
 	return byPath
 }
 
-func (a App) treeEntries(path string, changes []ChangedFile) ([]ChangedFile, error) {
+func (a App) treeEntries(path string, changes []ChangedFile, gitAvailable bool) ([]ChangedFile, error) {
 	fullPath := filepath.Join(a.root, path)
 	entries, err := os.ReadDir(fullPath)
 	if err != nil {
@@ -879,7 +1017,7 @@ func (a App) treeEntries(path string, changes []ChangedFile) ([]ChangedFile, err
 		files = append(files, change)
 	}
 
-	ignored := a.ignoredSet(checkPaths)
+	ignored := a.ignoredSet(checkPaths, gitAvailable)
 	for i := range files {
 		if ignored[files[i].Path] {
 			files[i].Ignored = true
@@ -898,9 +1036,9 @@ func (a App) treeEntries(path string, changes []ChangedFile) ([]ChangedFile, err
 	return files, nil
 }
 
-func (a App) ignoredSet(paths []string) map[string]bool {
+func (a App) ignoredSet(paths []string, gitAvailable bool) map[string]bool {
 	ignored := map[string]bool{}
-	if len(paths) == 0 {
+	if !gitAvailable || len(paths) == 0 {
 		return ignored
 	}
 
@@ -1162,6 +1300,11 @@ func lineCount(content []byte) int {
 func (a App) hasHead() bool {
 	_, err := a.run("git", "rev-parse", "--verify", "HEAD")
 	return err == nil
+}
+
+func (a App) isGitRepository() bool {
+	out, err := a.run("git", "rev-parse", "--is-inside-work-tree")
+	return err == nil && strings.TrimSpace(out) == "true"
 }
 
 func (a App) unstage(path string) (StatusResponse, error) {
