@@ -841,6 +841,14 @@
         background: color-mix(in srgb, var(--blue) 26%, transparent);
         box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 70%, transparent);
       }
+      .editor-find-match.selection-match {
+        background: color-mix(in srgb, var(--blue) 18%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 48%, transparent);
+      }
+      .editor-find-match.selection-match.current {
+        background: color-mix(in srgb, var(--blue) 28%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 72%, transparent);
+      }
       .editor-highlight.wrap-enabled {
         white-space: pre-wrap;
         word-wrap: break-word;

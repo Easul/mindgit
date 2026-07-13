@@ -270,6 +270,10 @@ function setupEditorShortcuts(editor) {
     clearEditorMeasurementCache(editor);
     clearEditorWrapLayoutCache(editor);
   });
+  editor.addEventListener('select', () => {
+    updateFindBarMatches(findBar);
+    renderEditorFindHighlights(findBar);
+  });
   editor.addEventListener('keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
       if (lineHighlight) lineHighlight.style.display = 'none';
@@ -481,6 +485,26 @@ function setupEditorShortcuts(editor) {
         commitEditorChange();
         setMessage('Cut block', 'ok');
       }
+      return;
+    }
+
+    if (blockSelection && isMultiLineBlockSelection(blockSelection) && e.key === 'Tab') {
+      e.preventDefault();
+      recordSelectionHistoryState();
+      if (applyBlockSelectionResult(indentBlockSelection(editor, blockSelection, e.shiftKey))) {
+        setMessage(e.shiftKey ? 'Outdented cursors' : 'Indented cursors', 'ok');
+      }
+      return;
+    }
+
+    if (blockSelection && isMultiLineBlockSelection(blockSelection) && (e.key === 'Backspace' || e.key === 'Delete')) {
+      e.preventDefault();
+      recordSelectionHistoryState();
+      applyBlockSelectionResult(deleteBlockSelectionContent(
+        editor,
+        blockSelection,
+        e.key === 'Backspace' ? 'backward' : 'forward',
+      ));
       return;
     }
 
@@ -1083,14 +1107,12 @@ function renderEditorFindHighlights(bar) {
   const highlight = $('editor-highlight');
   if (!editor || !highlight) return;
 
-  if (bar.hidden) {
-    highlight.innerHTML = '';
-    highlight.style.display = 'none';
-    return;
-  }
-
-  const query = bar._mindgitFindInput.value;
-  const { matches, error } = editorMatches(editor, query, { regex: isEditorRegexMode(bar) });
+  const selectedText = getSelectedEditorText(editor);
+  const useSelection = bar.hidden && selectedText.length > 0;
+  const query = useSelection ? selectedText : bar._mindgitFindInput.value;
+  const { matches, error } = editorMatches(editor, query, {
+    regex: useSelection ? false : isEditorRegexMode(bar),
+  });
   if (!query || error || !matches.length) {
     highlight.innerHTML = '';
     highlight.style.display = 'none';
@@ -1105,7 +1127,11 @@ function renderEditorFindHighlights(bar) {
   for (let i = 0; i < matches.length; i++) {
     const match = matches[i];
     html += escapeHTML(editor.value.slice(cursor, match.start));
-    html += renderEditorFindMatchHTML(editor.value.slice(match.start, match.end), i === currentIndex);
+    html += renderEditorFindMatchHTML(
+      editor.value.slice(match.start, match.end),
+      i === currentIndex,
+      useSelection,
+    );
     cursor = match.end;
   }
   html += escapeHTML(editor.value.slice(cursor));
@@ -1156,8 +1182,8 @@ function restoreEditorCommandState(editor, commandState) {
   }
 }
 
-function renderEditorFindMatchHTML(text, isCurrent) {
-  const className = `editor-find-match${isCurrent ? ' current' : ''}`;
+function renderEditorFindMatchHTML(text, isCurrent, isSelectionMatch = false) {
+  const className = `editor-find-match${isCurrent ? ' current' : ''}${isSelectionMatch ? ' selection-match' : ''}`;
   if (text.length === 0) {
     return `<mark class="${className} zero-width"><span class="editor-find-boundary"></span></mark>`;
   }
@@ -1293,6 +1319,7 @@ function getCursorPosition(editor) {
 function handleTabIndent(editor, isShiftTab) {
   const start = editor.selectionStart;
   const end = editor.selectionEnd;
+  const effectiveEnd = end > start && editor.value[end - 1] === '\n' ? end - 1 : end;
   const text = editor.value;
   const lines = splitEditorLines(text);
 
@@ -1303,7 +1330,7 @@ function handleTabIndent(editor, isShiftTab) {
   for (let i = 0; i < lines.length; i++) {
     const lineEnd = pos + lines[i].length;
     if (pos <= start && start <= lineEnd) startLine = i;
-    if (pos <= end && end <= lineEnd) endLine = i;
+    if (pos <= effectiveEnd && effectiveEnd <= lineEnd) endLine = i;
     pos = lineEnd + 1;
   }
 
@@ -2190,6 +2217,32 @@ function replaceBlockSelectionText(editor, selection, text) {
     replacement: text,
     caretOffset: text.length,
   }));
+}
+
+function indentBlockSelection(editor, selection, isShiftTab) {
+  return applyBlockSelectionEdits(editor, selection, (range) => {
+    if (!isShiftTab) {
+      return {
+        start: range.startPos,
+        end: range.startPos,
+        replacement: '  ',
+        caretOffset: 2,
+      };
+    }
+
+    const removableBefore = range.startCol >= 2 && range.line.slice(range.startCol - 2, range.startCol) === '  '
+      ? 2
+      : range.startCol >= 1 && /[ \t]/.test(range.line[range.startCol - 1])
+        ? 1
+        : 0;
+    if (!removableBefore) return null;
+    return {
+      start: range.startPos - removableBefore,
+      end: range.startPos,
+      replacement: '',
+      caretOffset: 0,
+    };
+  });
 }
 
 function normalizePastedText(text) {
