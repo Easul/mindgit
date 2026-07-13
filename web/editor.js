@@ -5,6 +5,7 @@ function setupEditorShortcuts(editor) {
   const lineGutterEl = $('editor-line-gutter');
   const lineHighlight = $('editor-line-highlight');
   const highlightEl = $('editor-highlight');
+  const selectionMatchOverlay = createSelectionMatchOverlay(editor);
   const blockSelectionOverlay = createBlockSelectionOverlay(editor);
   const linkHintOverlay = createEditorLinkHintOverlay(editor);
   const findBar = createEditorFindBar(editor);
@@ -28,6 +29,7 @@ function setupEditorShortcuts(editor) {
         const cursorLine = getCurrentLine(editor).lineIndex + 1;
         updateCurrentLineHighlight(cursorLine);
       }
+      renderEditorFindHighlights(findBar);
     })
     : null;
 
@@ -270,10 +272,16 @@ function setupEditorShortcuts(editor) {
     clearEditorMeasurementCache(editor);
     clearEditorWrapLayoutCache(editor);
   });
-  editor.addEventListener('select', () => {
+  const updateSelectionHighlights = () => {
     updateFindBarMatches(findBar);
     renderEditorFindHighlights(findBar);
-  });
+  };
+  editor.addEventListener('select', updateSelectionHighlights);
+  editor.addEventListener('pointerup', updateSelectionHighlights);
+  editor.addEventListener('keyup', updateSelectionHighlights);
+  document.addEventListener('selectionchange', () => {
+    if (document.activeElement === editor) updateSelectionHighlights();
+  }, listenerOptions);
   editor.addEventListener('keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
       if (lineHighlight) lineHighlight.style.display = 'none';
@@ -302,6 +310,7 @@ function setupEditorShortcuts(editor) {
 
   editor.addEventListener('scroll', () => {
     syncEditorChrome();
+    renderEditorFindHighlights(findBar);
     renderBlockSelection(editor, blockSelectionOverlay, blockSelection, LINE_HEIGHT);
     if (lineHighlight && lineHighlight.style.display !== 'none') {
       const cursorLine = getCurrentLine(editor).lineIndex + 1;
@@ -357,6 +366,7 @@ function setupEditorShortcuts(editor) {
     editor._mindgitMeasurementLayer = null;
     editor._mindgitWrapMeasurementLayer?.root?.remove();
     editor._mindgitWrapMeasurementLayer = null;
+    editor._mindgitSelectionMatchOverlay = null;
     clearEditorMeasurementCache(editor);
     clearEditorWrapLayoutCache(editor);
   };
@@ -1106,6 +1116,7 @@ function renderEditorFindHighlights(bar) {
   const editor = bar?._mindgitEditor;
   const highlight = $('editor-highlight');
   if (!editor || !highlight) return;
+  const selectionMatchOverlay = editor._mindgitSelectionMatchOverlay;
 
   const selectedText = getSelectedEditorText(editor);
   const useSelection = bar.hidden && selectedText.length > 0;
@@ -1116,11 +1127,21 @@ function renderEditorFindHighlights(bar) {
   if (!query || error || !matches.length) {
     highlight.innerHTML = '';
     highlight.style.display = 'none';
+    renderEditorSelectionMatchHighlights(editor, selectionMatchOverlay, []);
     return;
   }
 
   let currentIndex = currentEditorMatchIndex(editor, matches);
   if (currentIndex === -1) currentIndex = 0;
+
+  if (useSelection) {
+    highlight.innerHTML = '';
+    highlight.style.display = 'none';
+    renderEditorSelectionMatchHighlights(editor, selectionMatchOverlay, matches, currentIndex);
+    return;
+  }
+
+  renderEditorSelectionMatchHighlights(editor, selectionMatchOverlay, []);
 
   let cursor = 0;
   let html = '';
@@ -1130,7 +1151,6 @@ function renderEditorFindHighlights(bar) {
     html += renderEditorFindMatchHTML(
       editor.value.slice(match.start, match.end),
       i === currentIndex,
-      useSelection,
     );
     cursor = match.end;
   }
@@ -1182,8 +1202,8 @@ function restoreEditorCommandState(editor, commandState) {
   }
 }
 
-function renderEditorFindMatchHTML(text, isCurrent, isSelectionMatch = false) {
-  const className = `editor-find-match${isCurrent ? ' current' : ''}${isSelectionMatch ? ' selection-match' : ''}`;
+function renderEditorFindMatchHTML(text, isCurrent) {
+  const className = `editor-find-match${isCurrent ? ' current' : ''}`;
   if (text.length === 0) {
     return `<mark class="${className} zero-width"><span class="editor-find-boundary"></span></mark>`;
   }
@@ -1396,6 +1416,14 @@ function createBlockSelectionOverlay(editor) {
   const overlay = document.createElement('div');
   overlay.className = 'editor-block-selection';
   editor.parentElement.appendChild(overlay);
+  return overlay;
+}
+
+function createSelectionMatchOverlay(editor) {
+  const overlay = document.createElement('div');
+  overlay.className = 'editor-selection-matches';
+  editor.parentElement.appendChild(overlay);
+  editor._mindgitSelectionMatchOverlay = overlay;
   return overlay;
 }
 
@@ -2143,6 +2171,39 @@ function renderBlockSelection(editor, overlay, selection, lineHeight) {
     rect.style.height = `${visual.height}px`;
     overlay.appendChild(rect);
   }
+}
+
+function renderEditorSelectionMatchHighlights(editor, overlay, matches, currentIndex = -1, lineHeight = 20) {
+  if (!overlay) return;
+  overlay.innerHTML = '';
+  if (!matches.length) return;
+
+  const lines = splitEditorLines(editor.value);
+  const style = getComputedStyle(editor);
+  const paddingLeft = parseFloat(style.paddingLeft) || 0;
+  const paddingTop = parseFloat(style.paddingTop) || 0;
+
+  matches.forEach((match, matchIndex) => {
+    if (matchIndex === currentIndex) return;
+    const start = findLineAndColumnAtPosition(lines, match.start);
+    const end = findLineAndColumnAtPosition(lines, match.end);
+
+    for (let row = start.lineIndex; row <= end.lineIndex; row++) {
+      const line = lines[row] || '';
+      const startCol = row === start.lineIndex ? start.column : 0;
+      const endCol = row === end.lineIndex ? end.column : line.length;
+      if (startCol === endCol && match.start !== match.end) continue;
+
+      const rect = document.createElement('div');
+      const visual = getEditorVisualLineMetrics(editor, row, lineHeight);
+      rect.className = 'editor-selection-match-rect';
+      rect.style.left = `${paddingLeft + getEditorColumnOffset(editor, line, startCol) - editor.scrollLeft}px`;
+      rect.style.top = `${paddingTop + visual.top - editor.scrollTop}px`;
+      rect.style.width = `${Math.max(2, getEditorColumnsWidth(editor, line, startCol, endCol))}px`;
+      rect.style.height = `${visual.height}px`;
+      overlay.appendChild(rect);
+    }
+  });
 }
 
 function getBlockText(editor, selection) {
