@@ -218,6 +218,15 @@
         height: 1px;
         z-index: 0;
       }
+      @-moz-document url-prefix() {
+        .terminal-host .xterm-helper-textarea {
+          width: 16px;
+          height: 20px;
+          opacity: .01;
+          color: transparent;
+          caret-color: transparent;
+        }
+      }
       .terminal-extra-keys {
         display: grid;
         grid-template-columns: repeat(6, minmax(42px, 1fr));

@@ -98,6 +98,9 @@ function createTerminalClient(summary = null) {
       fallbackExpires: 0,
       lastData: '',
       lastDataAt: 0,
+      compositionData: '',
+      compositionStartedAt: 0,
+      compositionEndedAt: 0,
       timer: 0,
     },
   };
@@ -176,6 +179,23 @@ function sendTerminalInput(client, data) {
 function configureTerminalInput(client) {
   const { terminal, ime } = client;
   const textarea = terminal.textarea;
+  const queueComposition = (data) => {
+    const value = String(data || '');
+    if (!value) return;
+    ime.pendingData = value;
+    if (ime.lastData === value && ime.lastDataAt >= ime.compositionStartedAt) {
+      ime.pendingData = '';
+      return;
+    }
+    window.clearTimeout(ime.timer);
+    ime.timer = window.setTimeout(() => {
+      if (!ime.pendingData) return;
+      ime.fallbackData = ime.pendingData;
+      ime.fallbackExpires = Date.now() + 500;
+      ime.pendingData = '';
+      sendTerminalInput(client, ime.fallbackData);
+    }, 60);
+  };
   terminal.onData((data) => {
     if (ime.pendingData && data === ime.pendingData) {
       window.clearTimeout(ime.timer);
@@ -191,25 +211,45 @@ function configureTerminalInput(client) {
   if (!textarea) return;
   textarea.addEventListener('compositionstart', () => {
     ime.composing = true;
+    ime.compositionData = '';
+    ime.compositionStartedAt = Date.now();
     window.clearTimeout(ime.timer);
     ime.pendingData = '';
   });
+  textarea.addEventListener('compositionupdate', (event) => {
+    ime.compositionData = event.data || textarea.value || ime.compositionData;
+  });
+  textarea.addEventListener('beforeinput', (event) => {
+    if (!event.inputType?.includes('Composition')) return;
+    ime.compositionData = event.data || textarea.value || ime.compositionData;
+  });
+  textarea.addEventListener('input', (event) => {
+    const hasCompositionInputType = event.inputType?.includes('Composition');
+    const isCompositionInput = hasCompositionInputType
+      || event.isComposing
+      || ime.composing
+      || Date.now() - ime.compositionEndedAt < 100;
+    if (!isCompositionInput) return;
+    ime.compositionData = event.data || textarea.value || ime.compositionData;
+    if (!event.isComposing && hasCompositionInputType) {
+      ime.composing = false;
+      ime.compositionEndedAt = Date.now();
+      queueComposition(ime.compositionData);
+    } else if (!event.isComposing && !ime.composing) {
+      queueComposition(ime.compositionData);
+    }
+  });
   textarea.addEventListener('compositionend', (event) => {
     ime.composing = false;
-    ime.pendingData = event.data || '';
-    if (!ime.pendingData) return;
-    if (ime.lastData === ime.pendingData && Date.now() - ime.lastDataAt < 100) {
-      ime.pendingData = '';
-      return;
-    }
-    window.clearTimeout(ime.timer);
-    ime.timer = window.setTimeout(() => {
-      if (!ime.pendingData) return;
-      ime.fallbackData = ime.pendingData;
-      ime.fallbackExpires = Date.now() + 500;
-      ime.pendingData = '';
-      sendTerminalInput(client, ime.fallbackData);
-    }, 50);
+    ime.compositionEndedAt = Date.now();
+    ime.compositionData = event.data || textarea.value || ime.compositionData;
+    queueComposition(ime.compositionData);
+  });
+  textarea.addEventListener('blur', () => {
+    if (!ime.composing) return;
+    ime.composing = false;
+    ime.compositionEndedAt = Date.now();
+    queueComposition(ime.compositionData || textarea.value);
   });
 }
 
@@ -228,6 +268,19 @@ function terminalCellFromPointer(client, event) {
 
 function configureTerminalSelection(client) {
   let start = null;
+  client.terminal.attachCustomKeyEventHandler((event) => {
+    const isCopyShortcut = event.type === 'keydown'
+      && event.ctrlKey
+      && event.shiftKey
+      && !event.altKey
+      && !event.metaKey
+      && event.key.toLowerCase() === 'c';
+    if (!isCopyShortcut) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    copyTerminalSelection(client);
+    return false;
+  });
   const update = (event) => {
     if (!start || !terminalState.selecting || client.id !== terminalState.activeId) return;
     const end = terminalCellFromPointer(client, event);
