@@ -94,6 +94,128 @@
         overflow: hidden;
       }
 
+      .terminal-panel {
+        position: fixed;
+        z-index: 900;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        display: flex;
+        flex-direction: column;
+        height: min(var(--terminal-height, 360px), calc(100dvh - 64px));
+        min-height: 220px;
+        border-top: 1px solid var(--line);
+        background: var(--panel-2);
+        box-shadow: 0 -12px 32px rgba(0, 0, 0, .24);
+      }
+      .terminal-resizer {
+        position: absolute;
+        z-index: 2;
+        top: -4px;
+        right: 0;
+        left: 0;
+        height: 8px;
+        cursor: row-resize;
+      }
+      .terminal-toolbar {
+        display: flex;
+        align-items: stretch;
+        flex: 0 0 36px;
+        min-width: 0;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .terminal-tabs {
+        display: flex;
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow-x: auto;
+        scrollbar-width: thin;
+      }
+      .terminal-tab {
+        display: flex;
+        align-items: stretch;
+        flex: 0 0 auto;
+        max-width: 240px;
+        border-right: 1px solid var(--line);
+        color: var(--muted);
+      }
+      .terminal-tab.active {
+        color: var(--text);
+        box-shadow: inset 0 -2px var(--blue);
+      }
+      .terminal-tab.closed { opacity: .7; }
+      .terminal-tab-select,
+      .terminal-tab-close,
+      .terminal-tool-button {
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+      }
+      .terminal-tab-select {
+        max-width: 200px;
+        padding: 0 8px 0 12px;
+        overflow: hidden;
+        color: inherit;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .terminal-tab-close {
+        width: 30px;
+        padding: 0;
+        color: inherit;
+        font-size: 18px;
+      }
+      .terminal-tool-button {
+        flex: 0 0 38px;
+        padding: 0;
+        color: var(--muted);
+      }
+      .terminal-tool-button:hover,
+      .terminal-tool-button.active,
+      .terminal-tab-select:hover,
+      .terminal-tab-close:hover {
+        background: var(--active);
+        color: var(--text);
+      }
+      .terminal-hosts {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 6px 8px;
+        overflow: hidden;
+        background: var(--panel-2);
+      }
+      .terminal-host {
+        position: absolute;
+        inset: 6px 8px;
+        display: none;
+      }
+      .terminal-host.active { display: block; }
+      .terminal-host .xterm { height: 100%; }
+      .terminal-extra-keys {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(42px, 1fr));
+        flex: 0 0 auto;
+        gap: 5px;
+        padding: 6px 8px max(6px, env(safe-area-inset-bottom));
+        border-top: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .terminal-extra-keys button {
+        min-width: 0;
+        padding: 7px 4px;
+        border-radius: 5px;
+        font-size: 11px;
+        font-weight: 650;
+      }
+      .terminal-extra-keys button.active {
+        border-color: var(--blue);
+        background: var(--active);
+        color: var(--blue);
+      }
+      html[data-embed="true"] .terminal-panel { display: none !important; }
+
       header {
         display: flex;
         align-items: center;
@@ -1664,6 +1786,17 @@
           text-overflow: ellipsis;
           white-space: nowrap;
         }
+        .terminal-panel {
+          height: min(var(--terminal-height, 52dvh), calc(100dvh - 48px));
+          min-height: 240px;
+        }
+        .terminal-tab { max-width: 190px; }
+        .terminal-tab-select { max-width: 150px; }
+        .terminal-extra-keys {
+          gap: 4px;
+          padding-right: 5px;
+          padding-left: 5px;
+        }
       }
 
       @media (max-width: 520px) {
@@ -1689,4 +1822,18 @@
         :root[data-viewer-open="true"][data-mobile-expanded="true"] .file-tabs {
           padding: 2px 8px;
         }
+        .terminal-panel {
+          height: min(var(--terminal-height, 58dvh), calc(100dvh - 36px));
+          min-height: 280px;
+        }
+        .terminal-toolbar { flex-basis: 40px; }
+        .terminal-tool-button { flex-basis: 42px; }
+        .terminal-tab { max-width: 160px; }
+        .terminal-tab-select { max-width: 122px; padding-left: 8px; }
+        .terminal-hosts { padding: 4px; }
+        .terminal-host { inset: 4px; }
+        .terminal-extra-keys {
+          grid-template-columns: repeat(6, minmax(36px, 1fr));
+        }
+        .terminal-extra-keys button { padding: 8px 2px; font-size: 10px; }
       }

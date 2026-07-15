@@ -58,6 +58,7 @@
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <link rel="stylesheet" href="/vendor/mxgraph/css/common.css" />
+    <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -130,6 +131,31 @@
       </footer>
     </div>
 
+    <div id="terminal-panel" class="terminal-panel" hidden>
+      <div id="terminal-resizer" class="terminal-resizer" aria-hidden="true"></div>
+      <div class="terminal-toolbar">
+        <div id="terminal-tabs" class="terminal-tabs" role="tablist"></div>
+        <button id="terminal-new" class="terminal-tool-button" type="button" title="New terminal" aria-label="New terminal">+</button>
+        <button id="terminal-keys-toggle" class="terminal-tool-button" type="button" title="Show extra keys" aria-label="Show extra keys">⌨</button>
+        <button id="terminal-hide" class="terminal-tool-button" type="button" title="Hide terminal" aria-label="Hide terminal">⌄</button>
+      </div>
+      <div id="terminal-hosts" class="terminal-hosts"></div>
+      <div id="terminal-extra-keys" class="terminal-extra-keys" hidden>
+        <button type="button" data-terminal-key="escape">ESC</button>
+        <button type="button" data-terminal-modifier="alt">ALT</button>
+        <button type="button" data-terminal-key="home">HOME</button>
+        <button type="button" data-terminal-key="up">↑</button>
+        <button type="button" data-terminal-key="end">END</button>
+        <button type="button" data-terminal-key="pageup">PAGEUP</button>
+        <button type="button" data-terminal-key="tab">TAB</button>
+        <button type="button" data-terminal-modifier="ctrl">CTRL</button>
+        <button type="button" data-terminal-key="left">←</button>
+        <button type="button" data-terminal-key="down">↓</button>
+        <button type="button" data-terminal-key="right">→</button>
+        <button type="button" data-terminal-key="pagedown">PAGEDOWN</button>
+      </div>
+    </div>
+
     <script src="/utils.js"></script>
     <script src="/history.js"></script>
     <script src="/tree.js"></script>
@@ -142,6 +168,9 @@
     <script src="/structured.js"></script>
     <script src="/viewer.js"></script>
     <script src="/editor.js"></script>
+    <script src="/vendor/xterm/xterm.js"></script>
+    <script src="/vendor/xterm/xterm-addon-fit.js"></script>
+    <script src="/terminal.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

@@ -545,10 +545,20 @@ function closeEmbeddedSplit() {
 
 function openTreeMenu(anchor, path, kind) {
   const basePath = kind === 'dir' ? path : groupForPath(path);
-  const items = [
+  const items = [];
+
+  if (!path && !state.embed) {
+    items.push(
+      { label: 'Open Terminal', action: () => openTerminalPanel() },
+      { label: 'New Terminal', action: () => openTerminalPanel({ newTab: true }) },
+      { separator: true },
+    );
+  }
+
+  items.push(
     { label: 'New File', action: () => promptCreatePath(basePath, 'file') },
     { label: 'New Folder', action: () => promptCreatePath(basePath, 'dir') },
-  ];
+  );
 
   if (kind === 'file' && path) {
     items.push(

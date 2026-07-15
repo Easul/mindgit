@@ -17,6 +17,7 @@ It opens directly on uncommitted Git changes and combines a source-control style
 - Includes `rg`-powered search
 - Supports dark and light themes with local persistence
 - Supports configurable project directory, bind address, and port
+- Includes a global, multi-tab xterm.js terminal panel with persistent server-side sessions on Linux
 
 ## User guide
 

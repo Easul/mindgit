@@ -31,6 +31,7 @@ type App struct {
 	projects       []ProjectSummary
 	projectByKey   map[string]ProjectSummary
 	defaultProject string
+	terminals      *TerminalManager
 }
 
 type multiStringFlag []string
@@ -174,6 +175,7 @@ func main() {
 		projects:       projects,
 		projectByKey:   projectMap(projects),
 		defaultProject: projects[0].Key,
+		terminals:      NewTerminalManager(),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/projects", app.handleProjects)
@@ -193,6 +195,9 @@ func main() {
 	mux.HandleFunc("GET /api/commits", app.handleCommits)
 	mux.HandleFunc("GET /api/commit", app.handleCommit)
 	mux.HandleFunc("GET /api/commit-diff", app.handleCommitDiff)
+	mux.HandleFunc("GET /api/terminal", app.handleTerminal)
+	mux.HandleFunc("GET /api/terminals", app.handleTerminals)
+	mux.HandleFunc("DELETE /api/terminal", app.handleDeleteTerminal)
 	mux.Handle("/", http.FileServer(http.FS(staticFiles())))
 
 	addr := net.JoinHostPort(config.host, strconv.Itoa(config.port))
@@ -336,6 +341,7 @@ func (a App) appForRequest(r *http.Request) (App, error) {
 		projects:       a.projects,
 		projectByKey:   a.projectByKey,
 		defaultProject: project.Key,
+		terminals:      a.terminals,
 	}, nil
 }
 

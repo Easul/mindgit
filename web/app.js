@@ -655,6 +655,9 @@ function applyTheme(theme, options = {}) {
   if (options.notifySplit !== false) {
     notifySplitTheme();
   }
+  if (typeof syncTerminalTheme === 'function') {
+    syncTerminalTheme();
+  }
 }
 
 function currentInteractionTarget() {
