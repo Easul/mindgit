@@ -2,3 +2,6 @@
 /.playwright-mcp
 /dist
 /.omo
+/.codex
+/.claude
+/.agents
