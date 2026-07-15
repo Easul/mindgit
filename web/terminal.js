@@ -5,6 +5,7 @@ const terminalState = {
   clients: new Map(),
   ctrl: false,
   alt: false,
+  selecting: false,
   height: Number(localStorage.getItem('mindgit-terminal-height')) || 360,
 };
 
@@ -80,6 +81,7 @@ function createTerminalClient(summary = null) {
   const client = {
     id: temporaryId,
     title: summary?.title || 'Starting…',
+    projectKey: summary?.projectKey || state.currentProjectKey,
     project: summary?.project || currentProject()?.name || '',
     terminal,
     fit,
@@ -89,9 +91,20 @@ function createTerminalClient(summary = null) {
     reconnectTimer: 0,
     ready: false,
     closed: Boolean(summary?.closed),
+    ime: {
+      composing: false,
+      pendingData: '',
+      fallbackData: '',
+      fallbackExpires: 0,
+      lastData: '',
+      lastDataAt: 0,
+      timer: 0,
+    },
   };
   terminalState.clients.set(temporaryId, client);
-  terminal.onData((data) => sendTerminalInput(client, data));
+  configureTerminalInput(client);
+  configureTerminalSelection(client);
+  terminal.onSelectionChange(() => updateTerminalSelectButton());
   connectTerminal(client, summary?.id || '');
   renderTerminalTabs();
   activateTerminal(temporaryId);
@@ -118,6 +131,7 @@ function connectTerminal(client, existingId) {
       const previousId = client.id;
       client.id = message.id;
       client.title = message.title;
+      client.projectKey = message.projectKey;
       client.project = message.project;
       client.ready = true;
       client.closed = false;
@@ -157,6 +171,146 @@ function sendTerminalInput(client, data) {
   if (terminalState.alt) output = `\x1b${output}`;
   sendTerminalMessage(client, { type: 'input', data: output });
   clearTerminalModifiers();
+}
+
+function configureTerminalInput(client) {
+  const { terminal, ime } = client;
+  const textarea = terminal.textarea;
+  terminal.onData((data) => {
+    if (ime.pendingData && data === ime.pendingData) {
+      window.clearTimeout(ime.timer);
+      ime.pendingData = '';
+    } else if (ime.fallbackData && data === ime.fallbackData && Date.now() < ime.fallbackExpires) {
+      ime.fallbackData = '';
+      return;
+    }
+    ime.lastData = data;
+    ime.lastDataAt = Date.now();
+    sendTerminalInput(client, data);
+  });
+  if (!textarea) return;
+  textarea.addEventListener('compositionstart', () => {
+    ime.composing = true;
+    window.clearTimeout(ime.timer);
+    ime.pendingData = '';
+  });
+  textarea.addEventListener('compositionend', (event) => {
+    ime.composing = false;
+    ime.pendingData = event.data || '';
+    if (!ime.pendingData) return;
+    if (ime.lastData === ime.pendingData && Date.now() - ime.lastDataAt < 100) {
+      ime.pendingData = '';
+      return;
+    }
+    window.clearTimeout(ime.timer);
+    ime.timer = window.setTimeout(() => {
+      if (!ime.pendingData) return;
+      ime.fallbackData = ime.pendingData;
+      ime.fallbackExpires = Date.now() + 500;
+      ime.pendingData = '';
+      sendTerminalInput(client, ime.fallbackData);
+    }, 50);
+  });
+}
+
+function terminalCellFromPointer(client, event) {
+  const screen = client.host.querySelector('.xterm-screen');
+  if (!screen) return null;
+  const rect = screen.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const column = Math.max(0, Math.min(client.terminal.cols - 1, Math.floor((event.clientX - rect.left) / rect.width * client.terminal.cols)));
+  const viewportRow = Math.max(0, Math.min(client.terminal.rows - 1, Math.floor((event.clientY - rect.top) / rect.height * client.terminal.rows)));
+  return {
+    column,
+    row: client.terminal.buffer.active.viewportY + viewportRow,
+  };
+}
+
+function configureTerminalSelection(client) {
+  let start = null;
+  const update = (event) => {
+    if (!start || !terminalState.selecting || client.id !== terminalState.activeId) return;
+    const end = terminalCellFromPointer(client, event);
+    if (!end) return;
+    const cols = client.terminal.cols;
+    const startOffset = start.row * cols + start.column;
+    const endOffset = end.row * cols + end.column;
+    const firstOffset = Math.min(startOffset, endOffset);
+    const lastOffset = Math.max(startOffset, endOffset);
+    client.terminal.select(firstOffset % cols, Math.floor(firstOffset / cols), lastOffset - firstOffset + 1);
+  };
+  client.host.addEventListener('pointerdown', (event) => {
+    if (!terminalState.selecting || client.id !== terminalState.activeId) return;
+    start = terminalCellFromPointer(client, event);
+    if (!start) return;
+    event.preventDefault();
+    client.host.setPointerCapture?.(event.pointerId);
+    client.terminal.clearSelection();
+  });
+  client.host.addEventListener('pointermove', (event) => {
+    if (!start) return;
+    event.preventDefault();
+    update(event);
+  });
+  client.host.addEventListener('pointerup', (event) => {
+    if (!start) return;
+    event.preventDefault();
+    update(event);
+    start = null;
+    client.host.releasePointerCapture?.(event.pointerId);
+    updateTerminalSelectButton();
+  });
+  client.host.addEventListener('pointercancel', () => {
+    start = null;
+  });
+}
+
+function updateTerminalSelectButton() {
+  const button = $('terminal-select');
+  if (!button) return;
+  const client = terminalState.clients.get(terminalState.activeId);
+  const hasSelection = Boolean(client?.terminal.hasSelection());
+  button.classList.toggle('active', terminalState.selecting || hasSelection);
+  button.title = hasSelection ? 'Copy selected text' : (terminalState.selecting ? 'Cancel text selection' : 'Select terminal text');
+  button.setAttribute('aria-label', button.title);
+}
+
+function setTerminalSelectionMode(enabled) {
+  terminalState.selecting = enabled;
+  for (const client of terminalState.clients.values()) {
+    client.host.classList.toggle('selecting', enabled && client.id === terminalState.activeId);
+  }
+  updateTerminalSelectButton();
+}
+
+async function copyTerminalSelection(client) {
+  const text = client?.terminal.getSelection();
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    textarea.remove();
+  }
+  setMessage?.('Terminal selection copied', 'ok');
+  client.terminal.clearSelection();
+  setTerminalSelectionMode(false);
+  client.terminal.focus();
+  return true;
+}
+
+async function handleTerminalSelect() {
+  const client = terminalState.clients.get(terminalState.activeId);
+  if (!client) return;
+  if (await copyTerminalSelection(client)) return;
+  setTerminalSelectionMode(!terminalState.selecting);
+  if (!terminalState.selecting) client.terminal.focus();
 }
 
 function sendTerminalMessage(client, message) {
@@ -201,11 +355,13 @@ function activateTerminal(id) {
   terminalState.activeId = id;
   for (const item of terminalState.clients.values()) {
     item.host.classList.toggle('active', item === client);
+    item.host.classList.toggle('selecting', terminalState.selecting && item === client);
   }
   renderTerminalTabs();
+  updateTerminalSelectButton();
   requestAnimationFrame(() => {
     fitTerminal(client);
-    client.terminal.focus();
+    if (!terminalState.selecting) client.terminal.focus();
   });
 }
 
@@ -262,12 +418,18 @@ async function openTerminalPanel(options = {}) {
   document.documentElement.dataset.terminalOpen = 'true';
   applyTerminalHeight();
   await loadTerminalSessions();
-  if (options.newTab || terminalState.clients.size === 0) createTerminalClient();
-  const active = terminalState.clients.get(terminalState.activeId) || terminalState.clients.values().next().value;
+  let active = null;
+  if (!options.newTab) {
+    active = [...terminalState.clients.values()].find((client) => (
+      client.projectKey === state.currentProjectKey && !client.closed
+    ));
+  }
+  if (!active) active = createTerminalClient();
   if (active) activateTerminal(active.id);
 }
 
 function hideTerminalPanel() {
+  setTerminalSelectionMode(false);
   $('terminal-panel').hidden = true;
   delete document.documentElement.dataset.terminalOpen;
 }
@@ -275,6 +437,7 @@ function hideTerminalPanel() {
 function initializeTerminalPanel() {
   if (terminalState.initialized) return;
   terminalState.initialized = true;
+  $('terminal-select').addEventListener('click', handleTerminalSelect);
   $('terminal-new').addEventListener('click', () => openTerminalPanel({ newTab: true }));
   $('terminal-hide').addEventListener('click', hideTerminalPanel);
   $('terminal-keys-toggle').addEventListener('click', () => {
@@ -288,11 +451,15 @@ function initializeTerminalPanel() {
   });
   $('terminal-extra-keys').addEventListener('click', handleTerminalExtraKey);
   setupTerminalResizer();
+  syncTerminalViewport();
   window.addEventListener('resize', () => {
+    syncTerminalViewport();
     const active = terminalState.clients.get(terminalState.activeId);
     if (active) active.terminal.options.fontSize = window.innerWidth <= 520 ? 13 : 14;
     requestAnimationFrame(() => fitTerminal(active));
   });
+  window.visualViewport?.addEventListener('resize', syncTerminalViewport);
+  window.visualViewport?.addEventListener('scroll', syncTerminalViewport);
 }
 
 function handleTerminalExtraKey(event) {
@@ -318,6 +485,29 @@ function configureTerminalTextarea(terminal) {
   textarea.setAttribute('autocorrect', 'off');
   textarea.setAttribute('spellcheck', 'false');
   textarea.setAttribute('enterkeyhint', 'enter');
+  textarea.setAttribute('inputmode', 'text');
+  textarea.setAttribute('lang', 'zh-CN');
+  textarea.setAttribute('aria-label', 'Terminal input');
+  textarea.addEventListener('focus', () => {
+    document.documentElement.dataset.terminalInputFocused = 'true';
+    syncTerminalViewport();
+  });
+  textarea.addEventListener('blur', () => {
+    window.setTimeout(() => {
+      if (document.activeElement?.classList.contains('xterm-helper-textarea')) return;
+      delete document.documentElement.dataset.terminalInputFocused;
+      syncTerminalViewport();
+    }, 0);
+  });
+}
+
+function syncTerminalViewport() {
+  const viewport = window.visualViewport;
+  const viewportHeight = Math.round(viewport?.height || window.innerHeight);
+  const viewportBottom = Math.round(viewportHeight + (viewport?.offsetTop || 0));
+  document.documentElement.style.setProperty('--terminal-viewport-height', `${viewportBottom}px`);
+  document.documentElement.style.setProperty('--terminal-mobile-max-height', `${Math.max(180, Math.floor(viewportHeight * 0.55))}px`);
+  requestAnimationFrame(() => fitTerminal());
 }
 
 function clearTerminalModifiers() {
@@ -327,7 +517,8 @@ function clearTerminalModifiers() {
 }
 
 function applyTerminalHeight() {
-  const max = Math.max(220, window.innerHeight - 100);
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const max = Math.max(180, viewportHeight - 100);
   terminalState.height = Math.min(max, Math.max(220, terminalState.height));
   document.documentElement.style.setProperty('--terminal-height', `${terminalState.height}px`);
 }
