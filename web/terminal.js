@@ -131,8 +131,7 @@ function connectTerminal(client, existingId) {
       requestAnimationFrame(() => fitTerminal(client));
     } else if (message.type === 'exit') {
       client.closed = true;
-      client.terminal.writeln(`\r\n\x1b[90m[${message.message || 'Process exited'}]\x1b[0m`);
-      renderTerminalTabs();
+      window.setTimeout(() => closeTerminal(client.id), 0);
     }
   });
   socket.addEventListener('close', () => {

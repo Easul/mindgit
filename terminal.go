@@ -193,6 +193,9 @@ func (m *TerminalManager) remove(id string) bool {
 	session, ok := m.sessions[id]
 	if ok {
 		delete(m.sessions, id)
+		if len(m.sessions) == 0 {
+			m.next = 0
+		}
 	}
 	m.mu.Unlock()
 	if ok {

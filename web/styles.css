@@ -102,7 +102,7 @@
         left: 0;
         display: flex;
         flex-direction: column;
-        height: min(var(--terminal-height, 360px), calc(100dvh - 64px));
+        height: var(--terminal-panel-size, min(var(--terminal-height, 360px), calc(100dvh - 64px)));
         min-height: 220px;
         border-top: 1px solid var(--line);
         background: var(--panel-2);
@@ -215,6 +215,9 @@
         color: var(--blue);
       }
       html[data-embed="true"] .terminal-panel { display: none !important; }
+      :root[data-terminal-open="true"] .app {
+        padding-bottom: var(--terminal-panel-size, min(var(--terminal-height, 360px), calc(100dvh - 64px)));
+      }
 
       header {
         display: flex;
@@ -1648,12 +1651,19 @@
       }
 
       @media (max-width: 900px) {
-        html, body { overflow-x: hidden; }
+        :root {
+          --terminal-panel-size: min(var(--terminal-height, 52dvh), calc(100dvh - 48px));
+        }
+        html, body {
+          height: 100%;
+          overflow: hidden;
+        }
         .app {
+          height: 100dvh;
           width: 100%;
           max-width: 100vw;
-          min-height: 100dvh;
-          overflow-x: hidden;
+          min-height: 0;
+          overflow: hidden;
         }
         header {
           flex-wrap: wrap;
@@ -1674,11 +1684,14 @@
         }
 
         main {
-          display: block;
+          display: flex;
+          flex-direction: column;
+          height: 100%;
           width: 100%;
           max-width: 100vw;
           min-width: 0;
-          min-height: auto;
+          min-height: 0;
+          overflow: hidden;
         }
         .layout-resizer,
         .split-pane-resizer {
@@ -1687,27 +1700,40 @@
         aside, section, .review {
           width: 100%;
           min-width: 0;
+          min-height: 0;
           border-right: 0;
           border-bottom: 1px solid var(--line);
         }
-        section { overflow: hidden; }
+        aside {
+          flex: 1 1 auto;
+          height: auto;
+        }
+        section {
+          flex: 1 1 auto;
+          overflow: hidden;
+        }
         .pane-title { padding: 10px 12px; }
         .file-list {
-          height: calc(100dvh - 154px);
-          min-height: 320px;
+          flex: 1 1 auto;
+          height: auto;
+          min-height: 0;
+          overflow-x: hidden;
+          overflow-y: auto;
+          overscroll-behavior-y: contain;
+          touch-action: pan-y;
+          -webkit-overflow-scrolling: touch;
         }
         :root[data-viewer-open="false"] section {
           display: none;
         }
-        :root[data-viewer-open="true"] .file-list {
-          height: 32dvh;
-          min-height: 150px;
+        :root[data-viewer-open="true"] aside {
+          flex: 0 0 clamp(140px, 32%, 280px);
         }
         .group-name, .file, .commit-item { padding-right: 12px; padding-left: calc(12px + var(--depth, 0) * 1ch); }
         #viewer {
-          flex: 0 0 auto;
-          height: 46dvh;
-          min-height: 280px;
+          flex: 1 1 auto;
+          height: auto;
+          min-height: 0;
         }
         pre, textarea.editor {
           max-width: 100%;
@@ -1787,7 +1813,7 @@
           white-space: nowrap;
         }
         .terminal-panel {
-          height: min(var(--terminal-height, 52dvh), calc(100dvh - 48px));
+          height: var(--terminal-panel-size);
           min-height: 240px;
         }
         .terminal-tab { max-width: 190px; }
@@ -1800,18 +1826,15 @@
       }
 
       @media (max-width: 520px) {
+        :root {
+          --terminal-panel-size: min(var(--terminal-height, 58dvh), calc(100dvh - 36px));
+        }
         body { font-size: 13px; }
         button { padding: 7px 9px; }
         header { gap: 7px; }
         .stat { flex: 1 1 calc(50% - 8px); }
-        .file-list { min-height: 300px; }
-        :root[data-viewer-open="true"] .file-list {
-          height: 34dvh;
-          min-height: 140px;
-        }
         .mini-stat { display: none; }
         .commit-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        #viewer { height: 50dvh; }
         :root[data-viewer-open="true"][data-mobile-expanded="true"] #viewer {
           height: auto;
           min-height: 0;
@@ -1823,7 +1846,7 @@
           padding: 2px 8px;
         }
         .terminal-panel {
-          height: min(var(--terminal-height, 58dvh), calc(100dvh - 36px));
+          height: var(--terminal-panel-size);
           min-height: 280px;
         }
         .terminal-toolbar { flex-basis: 40px; }
