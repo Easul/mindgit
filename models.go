@@ -42,6 +42,11 @@ type SaveRequest struct {
 	Content string `json:"content"`
 }
 
+type UploadResponse struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
 type CreatePathRequest struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`

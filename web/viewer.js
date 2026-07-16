@@ -1,3 +1,5 @@
+let pdfJSImportPromise = null;
+
 function updateEditButton(label, options = {}) {
   renderFileTabs();
 }
@@ -6,6 +8,7 @@ function getViewerScrollTarget(root = $('viewer')) {
   if (!root) return null;
   return root.querySelector('#markdown-viewer-scroll')
     || root.querySelector('#code-viewer-scroll')
+    || root.querySelector('#pdf-page-scroll')
     || root.querySelector('#viewer > pre')
     || root.querySelector('.image-viewer')
     || null;
@@ -66,6 +69,7 @@ async function renderSelected() {
 
   const isBinary = isLikelyBinary(state.selected);
   const isImage = isImageFile(state.selected);
+  const isPDF = isPDFFile(state.selected);
   const isStructured = isStructuredFile(state.selected);
 
   if (state.mode === 'edit') {
@@ -119,6 +123,13 @@ async function renderSelected() {
       await renderStructuredFull(state.selected);
     } else if (isImage) {
       renderImageViewer(state.selected);
+    } else if (isPDF) {
+      try {
+        await renderPDFViewer(state.selected);
+      } catch (error) {
+        $('viewer').innerHTML = `<div class="binary-notice"><div><strong>Cannot Preview PDF</strong><p>${escapeHTML(error.message)}</p><button id="pdf-error-download" type="button">Download</button></div></div>`;
+        $('pdf-error-download').addEventListener('click', () => downloadFile(state.selected));
+      }
     } else if (isBinary) {
       $('viewer').innerHTML = `<div class="binary-notice"><div><strong>Binary File</strong><p>This file cannot be displayed as text.</p></div></div>`;
     } else {
@@ -138,6 +149,10 @@ function isImageFile(path) {
   return ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'].includes(ext);
 }
 
+function isPDFFile(path) {
+  return path.toLowerCase().endsWith('.pdf');
+}
+
 function isLikelyBinary(path) {
   const ext = path.split('.').pop().toLowerCase();
   const binaryExts = [
@@ -150,6 +165,267 @@ function isLikelyBinary(path) {
     'ttf', 'otf', 'woff', 'woff2', 'eot',
   ];
   return binaryExts.includes(ext);
+}
+
+function fileAPIURL(pathname, path) {
+  const url = new URL(pathname, window.location.origin);
+  if (state.currentProjectKey) url.searchParams.set('project', state.currentProjectKey);
+  url.searchParams.set('path', path);
+  return `${url.pathname}${url.search}`;
+}
+
+async function loadPDFJS() {
+  if (!pdfJSImportPromise) {
+    pdfJSImportPromise = import('/vendor/pdfjs/pdf.min.mjs').then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+      return pdfjs;
+    });
+  }
+  return pdfJSImportPromise;
+}
+
+async function renderPDFViewer(pdfPath) {
+  const url = fileAPIURL('/api/pdf', pdfPath);
+  $('viewer').innerHTML = '<div class="empty">Loading PDF...</div>';
+
+  const probe = await fetch(url, {
+    cache: 'no-store',
+    headers: { Range: 'bytes=0-0' },
+  });
+  if (!probe.ok) {
+    let message = `Unable to preview PDF (${probe.status})`;
+    try {
+      const data = await probe.json();
+      if (data.error) message = data.error;
+    } catch {}
+    throw new Error(message);
+  }
+
+  const pdfjs = await loadPDFJS();
+  const loadingTask = pdfjs.getDocument({
+    url,
+    rangeChunkSize: 256 * 1024,
+    wasmUrl: '/vendor/pdfjs/wasm/',
+  });
+  const pdfDocument = await loadingTask.promise;
+  const savedState = state.tabStates[pdfPath] || {};
+  let scale = Math.min(4, Math.max(0.25, savedState.pdfScale || 1));
+  let fitWidth = savedState.pdfFitWidth !== false;
+  let renderGeneration = 0;
+  let scrollSaveTimer = 0;
+  let renderQueue = [];
+  let activeRenders = 0;
+  let pageItems = [];
+  const renderTasks = new Set();
+  let destroyed = false;
+
+  $('viewer').innerHTML = `
+    <div class="pdf-viewer" id="pdf-viewer" data-pdf-scale="${scale}" data-pdf-fit-width="${fitWidth}">
+      <div class="pdf-controls">
+        <span class="pdf-page-count">${pdfDocument.numPages} pages</span>
+        <span class="pdf-control-spacer"></span>
+        <button id="pdf-zoom-out" type="button" title="Zoom out">−</button>
+        <button id="pdf-fit" type="button" title="Fit width">Fit</button>
+        <button id="pdf-zoom-in" type="button" title="Zoom in">+</button>
+        <button id="pdf-download" type="button">Download</button>
+      </div>
+      <div class="pdf-page-scroll" id="pdf-page-scroll" tabindex="-1">
+        <div class="pdf-page-status" id="pdf-page-status">Loading ${pdfDocument.numPages} pages...</div>
+        <div class="pdf-pages" id="pdf-pages"></div>
+      </div>
+    </div>`;
+
+  const viewer = $('pdf-viewer');
+  const scroll = $('pdf-page-scroll');
+  const pages = $('pdf-pages');
+  const status = $('pdf-page-status');
+
+  const persistState = () => {
+    viewer.dataset.pdfScale = String(scale);
+    viewer.dataset.pdfFitWidth = String(fitWidth);
+  };
+
+  const updateRenderStatus = () => {
+    if (activeRenders || renderQueue.length) {
+      status.textContent = `Rendering pages near your position...`;
+      status.hidden = false;
+    } else {
+      status.hidden = true;
+    }
+  };
+
+  const renderPageItem = async (item, generation) => {
+    if (destroyed || generation !== renderGeneration || item.rendered) return;
+    const page = await pdfDocument.getPage(item.pageNumber);
+    if (destroyed || generation !== renderGeneration) {
+      page.cleanup();
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    const outputScale = Math.min(isMobileLayout() ? 1.25 : 1.5, window.devicePixelRatio || 1);
+    const context = canvas.getContext('2d', { alpha: false });
+    canvas.width = Math.floor(item.viewport.width * outputScale);
+    canvas.height = Math.floor(item.viewport.height * outputScale);
+    canvas.style.width = `${Math.floor(item.viewport.width)}px`;
+    canvas.style.height = `${Math.floor(item.viewport.height)}px`;
+    canvas.setAttribute('aria-label', `Page ${item.pageNumber} of ${pdfDocument.numPages}`);
+    item.element.replaceChildren(canvas);
+
+    const renderTask = page.render({
+      canvasContext: context,
+      viewport: item.viewport,
+      transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0],
+    });
+    renderTasks.add(renderTask);
+    try {
+      await renderTask.promise;
+      if (!destroyed && generation === renderGeneration) item.rendered = true;
+    } catch (error) {
+      if (error?.name !== 'RenderingCancelledException') throw error;
+    } finally {
+      renderTasks.delete(renderTask);
+      page.cleanup();
+    }
+  };
+
+  const pumpRenderQueue = () => {
+    if (destroyed) return;
+    const generation = renderGeneration;
+    while (activeRenders < 2 && renderQueue.length) {
+      const item = renderQueue.shift();
+      item.queued = false;
+      if (item.rendered) continue;
+      activeRenders += 1;
+      renderPageItem(item, generation).catch((error) => {
+        setMessage(error.message || 'Unable to render PDF page', 'error');
+      }).finally(() => {
+        if (generation !== renderGeneration) return;
+        activeRenders -= 1;
+        updateRenderStatus();
+        pumpRenderQueue();
+      });
+    }
+    updateRenderStatus();
+  };
+
+  const queueNearbyPages = () => {
+    if (!pageItems.length || destroyed) return;
+    const viewportHeight = Math.max(1, scroll.clientHeight);
+    const center = scroll.scrollTop + viewportHeight / 2;
+    const rangeTop = Math.max(0, scroll.scrollTop - viewportHeight * 2);
+    const rangeBottom = scroll.scrollTop + viewportHeight * 3;
+    const nearbyItems = pageItems.filter((item) => (
+      item.element.offsetTop + item.element.offsetHeight >= rangeTop
+      && item.element.offsetTop <= rangeBottom
+    ));
+    const nearbySet = new Set(nearbyItems);
+    for (const item of renderQueue) {
+      if (!nearbySet.has(item)) item.queued = false;
+    }
+    renderQueue = renderQueue.filter((item) => nearbySet.has(item) && !item.rendered);
+    for (const item of nearbyItems) {
+      if (item.rendered || item.queued) continue;
+      item.queued = true;
+      renderQueue.push(item);
+    }
+    renderQueue.sort((left, right) => (
+      Math.abs(left.element.offsetTop + left.element.offsetHeight / 2 - center)
+      - Math.abs(right.element.offsetTop + right.element.offsetHeight / 2 - center)
+    ));
+    pumpRenderQueue();
+  };
+
+  const buildPagePlaceholders = async ({ scrollTop = 0, scrollRatio = null } = {}) => {
+    const generation = ++renderGeneration;
+    for (const task of renderTasks) task.cancel();
+    renderTasks.clear();
+    renderQueue = [];
+    activeRenders = 0;
+    pageItems = [];
+    pages.replaceChildren();
+    status.hidden = false;
+    $('pdf-fit').classList.toggle('active', fitWidth);
+    persistState();
+
+    for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+      if (destroyed || generation !== renderGeneration) return;
+      status.textContent = `Preparing page ${pageNumber} of ${pdfDocument.numPages}...`;
+      const page = await pdfDocument.getPage(pageNumber);
+      if (destroyed || generation !== renderGeneration) {
+        page.cleanup();
+        return;
+      }
+
+      const baseViewport = page.getViewport({ scale: 1 });
+      const availableWidth = Math.max(240, scroll.clientWidth - (isMobileLayout() ? 16 : 32));
+      const renderScale = fitWidth ? Math.min(3, availableWidth / baseViewport.width) : scale;
+      const viewport = page.getViewport({ scale: renderScale });
+      const pageElement = document.createElement('div');
+      pageElement.className = 'pdf-page';
+      pageElement.dataset.pageNumber = String(pageNumber);
+      pageElement.style.width = `${Math.floor(viewport.width)}px`;
+      pageElement.style.height = `${Math.floor(viewport.height)}px`;
+      pages.appendChild(pageElement);
+      pageItems.push({
+        element: pageElement,
+        pageNumber,
+        queued: false,
+        rendered: false,
+        viewport,
+      });
+      page.cleanup();
+    }
+
+    if (destroyed || generation !== renderGeneration) return;
+    const maxScrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    const targetScrollTop = scrollRatio === null
+      ? Number(scrollTop) || 0
+      : Math.max(0, Math.min(1, scrollRatio)) * maxScrollTop;
+    scroll.scrollTop = Math.min(Math.max(0, targetScrollTop), maxScrollTop);
+    status.hidden = true;
+    queueNearbyPages();
+  };
+
+  $('pdf-zoom-out').addEventListener('click', async () => {
+    const scrollRatio = scroll.scrollTop / Math.max(1, scroll.scrollHeight - scroll.clientHeight);
+    fitWidth = false;
+    scale = Math.max(0.25, scale / 1.2);
+    await buildPagePlaceholders({ scrollRatio });
+  });
+  $('pdf-zoom-in').addEventListener('click', async () => {
+    const scrollRatio = scroll.scrollTop / Math.max(1, scroll.scrollHeight - scroll.clientHeight);
+    fitWidth = false;
+    scale = Math.min(4, scale * 1.2);
+    await buildPagePlaceholders({ scrollRatio });
+  });
+  $('pdf-fit').addEventListener('click', async () => {
+    const scrollRatio = scroll.scrollTop / Math.max(1, scroll.scrollHeight - scroll.clientHeight);
+    fitWidth = true;
+    await buildPagePlaceholders({ scrollRatio });
+  });
+  $('pdf-download').addEventListener('click', () => downloadFile(pdfPath));
+  scroll.addEventListener('scroll', () => {
+    queueNearbyPages();
+    window.clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = window.setTimeout(() => {
+      saveCurrentTabState();
+      saveWorkspaceState();
+    }, 250);
+  }, { passive: true });
+  attachScrollableInteractionTarget(scroll);
+
+  viewer.dataset.mindgitCleanup = 'true';
+  viewer._mindgitCleanup = () => {
+    destroyed = true;
+    renderGeneration += 1;
+    window.clearTimeout(scrollSaveTimer);
+    for (const task of renderTasks) task.cancel();
+    renderTasks.clear();
+    loadingTask.destroy();
+  };
+
+  await buildPagePlaceholders({ scrollTop: savedState.scrollTop });
 }
 
 function renderImageViewer(imagePath) {

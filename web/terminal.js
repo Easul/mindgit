@@ -77,6 +77,7 @@ function createTerminalClient(summary = null) {
   terminal.loadAddon(fit);
   terminal.open(host);
   configureTerminalTextarea(terminal);
+  const cleanupScrollbar = configureTerminalScrollbar(host);
 
   const client = {
     id: temporaryId,
@@ -87,6 +88,7 @@ function createTerminalClient(summary = null) {
     fit,
     host,
     socket: null,
+    cleanupScrollbar,
     disposed: false,
     reconnectTimer: 0,
     ready: false,
@@ -112,6 +114,29 @@ function createTerminalClient(summary = null) {
   renderTerminalTabs();
   activateTerminal(temporaryId);
   return client;
+}
+
+function configureTerminalScrollbar(host) {
+  const viewport = host.querySelector('.xterm-viewport');
+  if (!viewport) return () => {};
+
+  let hideTimer = 0;
+  const showScrollbar = () => {
+    host.classList.add('scrollbar-active');
+    window.clearTimeout(hideTimer);
+    hideTimer = window.setTimeout(() => host.classList.remove('scrollbar-active'), 700);
+  };
+  const events = ['scroll', 'wheel', 'touchstart', 'pointerdown', 'pointerenter'];
+  for (const eventName of events) {
+    viewport.addEventListener(eventName, showScrollbar, { passive: true });
+  }
+
+  return () => {
+    window.clearTimeout(hideTimer);
+    for (const eventName of events) {
+      viewport.removeEventListener(eventName, showScrollbar);
+    }
+  };
 }
 
 function connectTerminal(client, existingId) {
@@ -217,11 +242,11 @@ function configureTerminalInput(client) {
     ime.pendingData = '';
   });
   textarea.addEventListener('compositionupdate', (event) => {
-    ime.compositionData = event.data || textarea.value || ime.compositionData;
+    ime.compositionData = event.data || ime.compositionData;
   });
   textarea.addEventListener('beforeinput', (event) => {
     if (!event.inputType?.includes('Composition')) return;
-    ime.compositionData = event.data || textarea.value || ime.compositionData;
+    ime.compositionData = event.data || ime.compositionData;
   });
   textarea.addEventListener('input', (event) => {
     const hasCompositionInputType = event.inputType?.includes('Composition');
@@ -230,7 +255,7 @@ function configureTerminalInput(client) {
       || ime.composing
       || Date.now() - ime.compositionEndedAt < 100;
     if (!isCompositionInput) return;
-    ime.compositionData = event.data || textarea.value || ime.compositionData;
+    ime.compositionData = event.data || ime.compositionData;
     if (!event.isComposing && hasCompositionInputType) {
       ime.composing = false;
       ime.compositionEndedAt = Date.now();
@@ -242,14 +267,14 @@ function configureTerminalInput(client) {
   textarea.addEventListener('compositionend', (event) => {
     ime.composing = false;
     ime.compositionEndedAt = Date.now();
-    ime.compositionData = event.data || textarea.value || ime.compositionData;
+    ime.compositionData = event.data || ime.compositionData;
     queueComposition(ime.compositionData);
   });
   textarea.addEventListener('blur', () => {
     if (!ime.composing) return;
     ime.composing = false;
     ime.compositionEndedAt = Date.now();
-    queueComposition(ime.compositionData || textarea.value);
+    queueComposition(ime.compositionData);
   });
 }
 
@@ -269,12 +294,20 @@ function terminalCellFromPointer(client, event) {
 function configureTerminalSelection(client) {
   let start = null;
   client.terminal.attachCustomKeyEventHandler((event) => {
+    const key = event.key.toLowerCase();
+    const isPasteShortcut = event.type === 'keydown'
+      && key === 'v'
+      && !event.altKey
+      && (event.metaKey || event.ctrlKey);
+    if (event.type === 'keydown' && (event.ctrlKey || event.metaKey) && !isPasteShortcut) {
+      event.preventDefault();
+    }
     const isCopyShortcut = event.type === 'keydown'
       && event.ctrlKey
       && event.shiftKey
       && !event.altKey
       && !event.metaKey
-      && event.key.toLowerCase() === 'c';
+      && key === 'c';
     if (!isCopyShortcut) return true;
     event.preventDefault();
     event.stopPropagation();
@@ -436,6 +469,7 @@ async function closeTerminal(id) {
   client.disposed = true;
   clearTimeout(client.reconnectTimer);
   client.socket?.close();
+  client.cleanupScrollbar?.();
   client.terminal.dispose();
   client.host.remove();
   terminalState.clients.delete(id);
@@ -513,6 +547,31 @@ function initializeTerminalPanel() {
   });
   window.visualViewport?.addEventListener('resize', syncTerminalViewport);
   window.visualViewport?.addEventListener('scroll', syncTerminalViewport);
+  document.addEventListener('keydown', preventTerminalBrowserShortcut, true);
+}
+
+function preventTerminalBrowserShortcut(event) {
+  if (!(event.ctrlKey || event.metaKey)) return;
+  if (!document.documentElement.dataset.terminalOpen) return;
+  const target = event.target instanceof Element ? event.target : null;
+  const helperTextarea = target?.closest('.xterm-helper-textarea')
+    || (document.activeElement?.classList.contains('xterm-helper-textarea') ? document.activeElement : null);
+  if (!helperTextarea) return;
+  const key = event.key.toLowerCase();
+  const isPasteShortcut = key === 'v'
+    && !event.altKey
+    && (event.metaKey || event.ctrlKey);
+  if (isPasteShortcut) return;
+  if (event.ctrlKey && !event.metaKey && !event.altKey && key === 'w') {
+    const host = helperTextarea.closest('.terminal-host');
+    const client = [...terminalState.clients.values()].find((item) => item.host === host)
+      || terminalState.clients.get(terminalState.activeId);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    sendTerminalInput(client, '\x17');
+    return;
+  }
+  event.preventDefault();
 }
 
 function handleTerminalExtraKey(event) {
@@ -557,8 +616,9 @@ function configureTerminalTextarea(terminal) {
 function syncTerminalViewport() {
   const viewport = window.visualViewport;
   const viewportHeight = Math.round(viewport?.height || window.innerHeight);
-  const viewportBottom = Math.round(viewportHeight + (viewport?.offsetTop || 0));
-  document.documentElement.style.setProperty('--terminal-viewport-height', `${viewportBottom}px`);
+  const viewportTop = Math.round(viewport?.offsetTop || 0);
+  document.documentElement.style.setProperty('--terminal-viewport-top', `${viewportTop}px`);
+  document.documentElement.style.setProperty('--terminal-viewport-height', `${viewportHeight}px`);
   document.documentElement.style.setProperty('--terminal-mobile-max-height', `${Math.max(180, Math.floor(viewportHeight * 0.55))}px`);
   requestAnimationFrame(() => fitTerminal());
 }

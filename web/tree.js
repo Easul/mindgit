@@ -307,6 +307,13 @@ function saveCurrentTabState() {
       }
     }
   }
+
+  const pdfViewer = viewer?.querySelector('.pdf-viewer');
+  if (pdfViewer) {
+    state.tabStates[state.selected].pdfPage = Number(pdfViewer.dataset.pdfPage) || 1;
+    state.tabStates[state.selected].pdfScale = Number(pdfViewer.dataset.pdfScale) || 1;
+    state.tabStates[state.selected].pdfFitWidth = pdfViewer.dataset.pdfFitWidth !== 'false';
+  }
 }
 
 function restoreTabState(path) {
@@ -364,7 +371,8 @@ async function selectFile(path, options = {}) {
     state.selected = path;
     const savedState = options.restoreState === false ? null : state.tabStates[path];
     state.mode = options.mode || savedState?.mode || 'full';
-    state.mobileViewerExpanded = Boolean(options.mobileViewerExpanded ?? state.mobileViewerExpanded);
+    const shouldExpandPDF = isMobileLayout() && typeof isPDFFile === 'function' && isPDFFile(path);
+    state.mobileViewerExpanded = Boolean(options.mobileViewerExpanded ?? (shouldExpandPDF || state.mobileViewerExpanded));
     state.editorReady = false;
     await ensurePathVisible(path);
     syncLayoutState();
@@ -558,6 +566,7 @@ function openTreeMenu(anchor, path, kind) {
   items.push(
     { label: 'New File', action: () => promptCreatePath(basePath, 'file') },
     { label: 'New Folder', action: () => promptCreatePath(basePath, 'dir') },
+    { label: 'Upload Files', action: () => promptUploadFiles(basePath) },
   );
 
   if (kind === 'file' && path) {
@@ -575,6 +584,190 @@ function openTreeMenu(anchor, path, kind) {
   }
 
   showActionMenu(anchor, items);
+}
+
+function promptUploadFiles(directory) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.hidden = true;
+  document.body.appendChild(input);
+  input.addEventListener('change', () => {
+    const files = [...input.files];
+    input.remove();
+    if (files.length) uploadFilesSequentially(directory, files);
+  }, { once: true });
+  input.addEventListener('cancel', () => input.remove(), { once: true });
+  input.click();
+}
+
+async function uploadFilesSequentially(directory, files) {
+  const overlay = document.createElement('div');
+  overlay.className = 'prompt-dialog-backdrop upload-dialog-backdrop';
+  const dialog = document.createElement('div');
+  dialog.className = 'prompt-dialog upload-dialog';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+
+  const title = document.createElement('h3');
+  title.className = 'prompt-dialog-title';
+  title.textContent = `Upload to ${directory || 'project root'}`;
+  const summary = document.createElement('p');
+  summary.className = 'prompt-dialog-message upload-summary';
+  const overall = document.createElement('progress');
+  overall.className = 'upload-overall-progress';
+  overall.max = files.reduce((sum, file) => sum + file.size, 0) || files.length;
+  overall.value = 0;
+  const list = document.createElement('div');
+  list.className = 'upload-list';
+  const actions = document.createElement('div');
+  actions.className = 'prompt-dialog-actions';
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.textContent = 'Cancel';
+  actions.appendChild(cancelButton);
+
+  dialog.append(title, summary, overall, list, actions);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  const rows = files.map((file) => {
+    const row = document.createElement('div');
+    row.className = 'upload-row';
+    const header = document.createElement('div');
+    header.className = 'upload-row-header';
+    const name = document.createElement('span');
+    name.className = 'upload-file-name';
+    name.textContent = file.name;
+    const status = document.createElement('span');
+    status.className = 'upload-file-status';
+    status.textContent = 'Waiting';
+    const progress = document.createElement('progress');
+    progress.max = file.size || 1;
+    progress.value = 0;
+    header.append(name, status);
+    row.append(header, progress);
+    list.appendChild(row);
+    return { row, status, progress };
+  });
+
+  let currentRequest = null;
+  let canceled = false;
+  let completedBytes = 0;
+  let uploadedCount = 0;
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+
+  const updateSummary = (loaded = 0) => {
+    const currentBytes = completedBytes + loaded;
+    overall.value = totalBytes ? currentBytes : uploadedCount;
+    summary.textContent = `${uploadedCount} of ${files.length} files complete · ${formatFileSize(currentBytes)} / ${formatFileSize(totalBytes)}`;
+  };
+
+  cancelButton.addEventListener('click', () => {
+    if (cancelButton.dataset.done === 'true') {
+      overlay.remove();
+      return;
+    }
+    canceled = true;
+    cancelButton.disabled = true;
+    cancelButton.textContent = 'Canceling...';
+    currentRequest?.abort();
+  });
+
+  updateSummary();
+  let failure = null;
+  for (let index = 0; index < files.length; index++) {
+    if (canceled) break;
+    const file = files[index];
+    const row = rows[index];
+    row.row.classList.add('active');
+    row.status.textContent = 'Uploading 0%';
+
+    try {
+      await uploadSingleFile(directory, file, (request, loaded) => {
+        currentRequest = request;
+        row.progress.value = loaded;
+        const percent = file.size ? Math.min(100, Math.round((loaded / file.size) * 100)) : 100;
+        row.status.textContent = `Uploading ${percent}%`;
+        updateSummary(loaded);
+      });
+      currentRequest = null;
+      completedBytes += file.size;
+      uploadedCount++;
+      row.progress.value = file.size || 1;
+      row.status.textContent = 'Complete';
+      row.row.classList.remove('active');
+      row.row.classList.add('complete');
+      updateSummary();
+    } catch (error) {
+      currentRequest = null;
+      failure = canceled ? new Error('Upload canceled') : error;
+      row.status.textContent = failure.message;
+      row.row.classList.remove('active');
+      row.row.classList.add('failed');
+      break;
+    }
+  }
+
+  if (uploadedCount > 0) {
+    try {
+      state.status = await api('/api/status');
+      await refreshLoadedGroups();
+      renderStatus();
+    } catch (error) {
+      failure ||= error;
+    }
+  }
+
+  if (canceled && !failure) failure = new Error('Upload canceled');
+
+  cancelButton.disabled = false;
+  cancelButton.dataset.done = 'true';
+  cancelButton.textContent = 'Close';
+  if (failure) {
+    summary.textContent = `${uploadedCount} of ${files.length} files uploaded. ${failure.message}`;
+    summary.classList.add('error');
+    setMessage(failure.message, 'error');
+  } else {
+    summary.textContent = `${files.length} files uploaded successfully.`;
+    summary.classList.add('ok');
+    setMessage(`${files.length} files uploaded`, 'ok');
+  }
+}
+
+function uploadSingleFile(directory, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const url = new URL('/api/upload', window.location.origin);
+    if (state.currentProjectKey) url.searchParams.set('project', state.currentProjectKey);
+    if (directory) url.searchParams.set('dir', directory);
+    url.searchParams.set('name', file.name);
+
+    const request = new XMLHttpRequest();
+    request.open('POST', `${url.pathname}${url.search}`);
+    request.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    request.upload.addEventListener('progress', (event) => onProgress(request, event.loaded));
+    request.addEventListener('load', () => {
+      let data = {};
+      try { data = JSON.parse(request.responseText || '{}'); } catch {}
+      if (request.status >= 200 && request.status < 300) {
+        resolve(data);
+      } else {
+        reject(new Error(data.error || `Upload failed (${request.status})`));
+      }
+    });
+    request.addEventListener('error', () => reject(new Error('Network error while uploading')));
+    request.addEventListener('abort', () => reject(new Error('Upload canceled')));
+    onProgress(request, 0);
+    request.send(file);
+  });
+}
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / (1024 ** index);
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
 }
 
 async function promptCreatePath(basePath, kind) {

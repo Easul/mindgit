@@ -1,0 +1,184 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func testRequestApp(root string) App {
+	projects := buildProjects([]string{root})
+	return App{
+		root:           root,
+		projects:       projects,
+		projectByKey:   projectMap(projects),
+		defaultProject: projects[0].Key,
+	}
+}
+
+func TestHandlePDFFileSupportsRanges(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("%PDF-1.7\n0123456789\n%%EOF")
+	if err := os.WriteFile(filepath.Join(root, "sample.pdf"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	request := newTestRequest(t, http.MethodGet, "/api/pdf?path=sample.pdf", nil)
+	request.Header.Set("Range", "bytes=9-13")
+	response := newTestResponse()
+	testRequestApp(root).handlePDFFile(response, request)
+
+	if response.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusPartialContent, response.Body.String())
+	}
+	if got := response.Body.String(); got != "01234" {
+		t.Fatalf("range body = %q, want %q", got, "01234")
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/pdf" {
+		t.Fatalf("Content-Type = %q, want application/pdf", got)
+	}
+}
+
+func TestHandlePDFFileRejectsFilesOverLimit(t *testing.T) {
+	root := t.TempDir()
+	file, err := os.Create(filepath.Join(root, "large.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxPDFPreviewSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	response := newTestResponse()
+	testRequestApp(root).handlePDFFile(response, newTestRequest(t, http.MethodGet, "/api/pdf?path=large.pdf", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(response.Body.String(), "limited to 40 MB") {
+		t.Fatalf("unexpected body: %s", response.Body.String())
+	}
+}
+
+func TestHandleUploadFileWritesAtomically(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	response := newTestResponse()
+	testRequestApp(root).handleUploadFile(response, newTestRequest(t, http.MethodPost, "/api/upload?dir=docs&name=notes.txt", strings.NewReader("hello")))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", response.Code, response.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(root, "docs", "notes.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "hello" {
+		t.Fatalf("content = %q, want hello", content)
+	}
+	var result UploadResponse
+	if err := json.NewDecoder(&response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != "docs/notes.txt" || result.Size != 5 {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+	assertNoUploadParts(t, filepath.Join(root, "docs"))
+}
+
+func TestHandleUploadFileRemovesPartialFileOnFailure(t *testing.T) {
+	root := t.TempDir()
+	response := newTestResponse()
+	body := &failingReader{data: []byte("partial"), err: errors.New("upload interrupted")}
+	testRequestApp(root).handleUploadFile(response, newTestRequest(t, http.MethodPost, "/api/upload?name=broken.txt", body))
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if _, err := os.Stat(filepath.Join(root, "broken.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial target exists or stat failed: %v", err)
+	}
+	assertNoUploadParts(t, root)
+}
+
+func TestHandleUploadFileRejectsExistingPath(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "existing.txt")
+	if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	response := newTestResponse()
+	testRequestApp(root).handleUploadFile(response, newTestRequest(t, http.MethodPost, "/api/upload?name=existing.txt", strings.NewReader("new")))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusConflict)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "old" {
+		t.Fatalf("existing content changed to %q", content)
+	}
+}
+
+func assertNoUploadParts(t *testing.T, directory string) {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".mindgit-upload-") {
+			t.Fatalf("temporary upload remains: %s", entry.Name())
+		}
+	}
+}
+
+type failingReader struct {
+	data []byte
+	err  error
+}
+
+func (r *failingReader) Read(buffer []byte) (int, error) {
+	if len(r.data) > 0 {
+		n := copy(buffer, r.data)
+		r.data = r.data[n:]
+		return n, nil
+	}
+	return 0, r.err
+}
+
+type testResponse struct {
+	header http.Header
+	Body   bytes.Buffer
+	Code   int
+}
+
+func newTestResponse() *testResponse {
+	return &testResponse{header: make(http.Header), Code: http.StatusOK}
+}
+
+func (r *testResponse) Header() http.Header { return r.header }
+
+func (r *testResponse) WriteHeader(status int) { r.Code = status }
+
+func (r *testResponse) Write(data []byte) (int, error) { return r.Body.Write(data) }
+
+func newTestRequest(t *testing.T, method, target string, body interface{ Read([]byte) (int, error) }) *http.Request {
+	t.Helper()
+	request, err := http.NewRequest(method, target, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request
+}
