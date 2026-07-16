@@ -51,6 +51,7 @@ http://127.0.0.1:8787
 ```bash
 mindgit [options]
 mindgit help
+mindgit version
 ```
 
 Options:
@@ -59,6 +60,7 @@ Options:
 -d, --dir <path>      Project directory to inspect. Default: current directory
 -b, --bind <addr>     Bind address: 127.0.0.1 or 0.0.0.0. Default: 127.0.0.1
 -p, --port <port>     HTTP port. Default: 8787
+-v, --version         Show version
 -h, --help            Show help
 ```
 
@@ -66,6 +68,12 @@ Example:
 
 ```bash
 mindgit --dir /path/to/project --bind 0.0.0.0 --port 8787
+```
+
+Print the embedded build version:
+
+```bash
+mindgit -v
 ```
 
 ## Build
@@ -100,8 +108,8 @@ platform limitations.
 Releases are created by pushing a tag that starts with `v`:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.0.2
+git push origin v0.0.2
 ```
 
 The release workflow builds stripped Linux, macOS, and Windows amd64 artifacts

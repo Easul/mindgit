@@ -4,6 +4,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dist_dir="${root_dir}/dist"
 compressed_web_dir="${root_dir}/temp/release-web"
+version="${MINDGIT_VERSION:-$(git -C "${root_dir}" describe --tags --always --dirty)}"
 
 cleanup() {
   rm -rf "${compressed_web_dir}"
@@ -35,7 +36,9 @@ build() {
   fi
 
   CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
-    go build -tags=compressedassets -trimpath -ldflags="-s -w" -o "${output}" "${root_dir}"
+    go build -tags=compressedassets -trimpath \
+      -ldflags="-s -w -X main.version=${version}" \
+      -o "${output}" "${root_dir}"
 }
 
 package() {

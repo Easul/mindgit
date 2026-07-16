@@ -37,6 +37,12 @@ cp ~/storage/downloads/mindgit-android-arm64 ~/bin/mindgit
 chmod +x ~/bin/mindgit
 ```
 
+Confirm the installed release version:
+
+```bash
+mindgit -v
+```
+
 For the packaged artifact, extract it first:
 
 ```bash

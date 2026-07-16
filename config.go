@@ -14,6 +14,8 @@ type Config struct {
 	port  int
 }
 
+var version = "dev"
+
 type multiStringFlag []string
 
 func (m *multiStringFlag) String() string {
@@ -30,10 +32,9 @@ func parseConfig(args []string) (Config, error) {
 		printUsage()
 		return Config{}, nil
 	}
-
-	defaultRoot, err := os.Getwd()
-	if err != nil {
-		return Config{}, err
+	if len(args) == 1 && args[0] == "version" {
+		printVersion()
+		return Config{}, nil
 	}
 
 	config := Config{host: "127.0.0.1", port: 8787}
@@ -41,10 +42,12 @@ func parseConfig(args []string) (Config, error) {
 	flags.SetOutput(os.Stdout)
 	flags.Usage = printUsage
 
-	var help bool
+	var help, showVersion bool
 	var dirs multiStringFlag
 	flags.BoolVar(&help, "h", false, "show help")
 	flags.BoolVar(&help, "help", false, "show help")
+	flags.BoolVar(&showVersion, "v", false, "show version")
+	flags.BoolVar(&showVersion, "version", false, "show version")
 	flags.Var(&dirs, "d", "project directory")
 	flags.Var(&dirs, "dir", "project directory")
 	flags.StringVar(&config.host, "b", config.host, "bind address, for example 127.0.0.1 or 0.0.0.0")
@@ -59,11 +62,20 @@ func parseConfig(args []string) (Config, error) {
 		printUsage()
 		return Config{}, nil
 	}
+	if showVersion {
+		printVersion()
+		return Config{}, nil
+	}
 	if flags.NArg() > 0 {
 		return Config{}, fmt.Errorf("unexpected argument: %s", flags.Arg(0))
 	}
 	if config.port < 1 || config.port > 65535 {
 		return Config{}, fmt.Errorf("port must be between 1 and 65535")
+	}
+
+	defaultRoot, err := os.Getwd()
+	if err != nil {
+		return Config{}, err
 	}
 
 	if len(dirs) == 0 {
@@ -93,16 +105,22 @@ func parseConfig(args []string) (Config, error) {
 	return config, nil
 }
 
+func printVersion() {
+	fmt.Printf("mindgit %s\n", version)
+}
+
 func printUsage() {
 	fmt.Println(`MindGit - local code review workbench
 
 Usage:
   mindgit [options]
   mindgit help
+  mindgit version
 
 Options:
   -d, --dir <path>      Project directory to inspect. Repeat to open multiple projects. Default: current directory
   -b, --bind <addr>     Bind address: 127.0.0.1 or 0.0.0.0. Default: 127.0.0.1
   -p, --port <port>     HTTP port. Default: 8787
+  -v, --version         Show version
   -h, --help            Show this help`)
 }
