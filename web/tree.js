@@ -225,8 +225,8 @@ function closeTab(path) {
   const index = state.openTabs.indexOf(path);
   if (index === -1) return;
 
+  if (path === state.selected) saveCurrentTabState();
   state.openTabs.splice(index, 1);
-  delete state.tabStates[path];
   delete state.tabDrafts[path];
 
   if (path === state.selected) {

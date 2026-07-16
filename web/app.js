@@ -866,6 +866,12 @@ function cleanupSplitPaneResizeObserver() {
   splitPaneResizeObserver = null;
 }
 
+function persistWorkspaceBeforeUnload() {
+  saveCurrentTabState();
+  saveWorkspaceState();
+  cleanupSplitPaneResizeObserver();
+}
+
 function syncSplitIframeViewport(iframe) {
   const doc = iframe?.contentDocument;
   if (!doc) return;
@@ -1156,7 +1162,8 @@ if ($('search-form')) $('search-form').addEventListener('submit', (event) => {
   search();
 });
 window.addEventListener('message', handleSplitPaneMessage);
-window.addEventListener('beforeunload', cleanupSplitPaneResizeObserver);
+window.addEventListener('beforeunload', persistWorkspaceBeforeUnload);
+window.addEventListener('pagehide', persistWorkspaceBeforeUnload);
 window.addEventListener('resize', syncViewerHeight);
 window.addEventListener('resize', scheduleProjectSwitcherLabelSync);
 window.addEventListener('blur', clearLinkOpenModifierHint);
