@@ -40,4 +40,6 @@ jobs:
             dist/mindgit-darwin-amd64.tar.gz
             dist/mindgit-windows-amd64.exe
             dist/mindgit-windows-amd64.zip
+            dist/mindgit-android-arm64
+            dist/mindgit-android-arm64.tar.gz
             dist/SHA256SUMS

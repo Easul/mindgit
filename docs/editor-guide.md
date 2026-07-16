@@ -112,3 +112,4 @@ This document covers the current built-in browser features and keyboard shortcut
 
 - Shortcuts are currently implemented with the `Ctrl` modifier in the web app. They are not mirrored onto the `Cmd` key for editing actions.
 - Structured editors such as Draw.io/KM reuse the same tab and draft workflow, but XMind is currently read-only.
+- The integrated terminal is available in Linux builds. Android/Termux builds currently support the rest of the browser workbench but not the integrated terminal panel.

@@ -24,6 +24,7 @@ It opens directly on uncommitted Git changes and combines a source-control style
 For the current browser features, editor behavior, and built-in keyboard shortcuts, see:
 
 - [docs/editor-guide.md](docs/editor-guide.md)
+- [docs/termux.md](docs/termux.md) for Android arm64 installation and builds
 
 ## Install from source
 
@@ -69,11 +70,30 @@ mindgit --dir /path/to/project --bind 0.0.0.0 --port 8787
 
 ## Build
 
-Build stripped Linux, macOS, and Windows amd64 artifacts:
+Build stripped Linux, macOS, and Windows amd64 artifacts, plus an Android arm64
+binary for Termux:
 
 ```bash
 scripts/build.sh
 ```
+
+Release builds embed pre-compressed web assets while remaining standalone
+single-file executables. The Android artifact is `dist/mindgit-android-arm64`.
+
+The Android binary targets 64-bit Termux installations. Copy it into Termux's
+private storage rather than running it directly from shared storage:
+
+```bash
+pkg install git ripgrep
+mkdir -p ~/bin
+cp ~/storage/downloads/mindgit-android-arm64 ~/bin/mindgit
+chmod +x ~/bin/mindgit
+~/bin/mindgit --dir ~/projects/example
+```
+
+Then open `http://127.0.0.1:8787` in the Android browser. See the
+[Termux guide](docs/termux.md) for source builds, network access, checksums, and
+platform limitations.
 
 ## Release
 
@@ -84,7 +104,9 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The release workflow builds stripped Linux, macOS, and Windows amd64 artifacts, packages them, writes checksums, and uploads the assets to a GitHub Release.
+The release workflow builds stripped Linux, macOS, and Windows amd64 artifacts
+and an Android arm64 artifact for Termux, packages them, writes checksums, and
+uploads the assets to a GitHub Release.
 
 ## Development checks
 

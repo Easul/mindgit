@@ -3,9 +3,26 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dist_dir="${root_dir}/dist"
+compressed_web_dir="${root_dir}/temp/release-web"
+
+cleanup() {
+  rm -rf "${compressed_web_dir}"
+}
+
+trap cleanup EXIT
 
 rm -rf "${dist_dir}"
 mkdir -p "${dist_dir}"
+
+rm -rf "${compressed_web_dir}"
+mkdir -p "${compressed_web_dir}"
+
+while IFS= read -r -d '' source; do
+  relative="${source#"${root_dir}/web/"}"
+  target="${compressed_web_dir}/${relative}.gz"
+  mkdir -p "$(dirname "${target}")"
+  gzip -9 -n -c "${source}" > "${target}"
+done < <(find "${root_dir}/web" -type f -print0)
 
 build() {
   local goos="$1"
@@ -18,7 +35,7 @@ build() {
   fi
 
   CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
-    go build -trimpath -ldflags="-s -w" -o "${output}" "${root_dir}"
+    go build -tags=compressedassets -trimpath -ldflags="-s -w" -o "${output}" "${root_dir}"
 }
 
 package() {
@@ -36,9 +53,11 @@ package() {
 build linux amd64
 build darwin amd64
 build windows amd64
+build android arm64
 
 package linux amd64
 package darwin amd64
 package windows amd64
+package android arm64
 
 (cd "${dist_dir}" && sha256sum mindgit-* > SHA256SUMS)

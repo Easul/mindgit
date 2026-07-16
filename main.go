@@ -47,7 +47,7 @@ func main() {
 	mux.HandleFunc("GET /api/terminal", app.handleTerminal)
 	mux.HandleFunc("GET /api/terminals", app.handleTerminals)
 	mux.HandleFunc("DELETE /api/terminal", app.handleDeleteTerminal)
-	mux.Handle("/", http.FileServer(http.FS(staticFiles())))
+	mux.Handle("/", staticHandler())
 
 	addr := net.JoinHostPort(config.host, strconv.Itoa(config.port))
 	log.Printf("MindGit serving %d project(s) at http://%s", len(config.roots), addr)
