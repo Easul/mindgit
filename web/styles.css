@@ -745,6 +745,7 @@
       .upload-row.failed .upload-file-status { color: var(--red); }
 
       .pdf-viewer {
+        position: relative;
         display: flex;
         flex-direction: column;
         height: 100%;
@@ -762,7 +763,36 @@
       }
       .pdf-controls button.active { border-color: var(--blue); color: var(--blue); }
       .pdf-control-spacer { flex: 1 1 auto; }
-      .pdf-page-count { color: var(--muted); white-space: nowrap; }
+      .pdf-page-jump {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .pdf-page-jump input {
+        width: 66px;
+        padding: 5px 6px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--input);
+        color: var(--text);
+        text-align: center;
+      }
+      .pdf-mobile-fullscreen { display: none; }
+      .pdf-fullscreen-exit { display: none; }
+      .pdf-viewer:fullscreen,
+      .pdf-viewer:-webkit-full-screen,
+      .pdf-viewer.pdf-fallback-fullscreen {
+        width: 100vw;
+        height: 100dvh;
+        background: var(--panel-2);
+      }
+      .pdf-viewer.pdf-fallback-fullscreen {
+        position: fixed;
+        z-index: 1000;
+        inset: 0;
+      }
       .pdf-page-scroll {
         position: relative;
         flex: 1 1 auto;
@@ -1994,6 +2024,18 @@
         :root[data-terminal-input-focused="true"] .terminal-panel { min-height: 180px; }
         .pdf-controls { flex-wrap: wrap; }
         .pdf-control-spacer { display: none; }
+        .pdf-mobile-fullscreen { display: inline-flex; }
+        .pdf-viewer:fullscreen .pdf-fullscreen-exit,
+        .pdf-viewer:-webkit-full-screen .pdf-fullscreen-exit,
+        .pdf-viewer.pdf-fallback-fullscreen .pdf-fullscreen-exit {
+          position: absolute;
+          z-index: 3;
+          top: max(8px, env(safe-area-inset-top));
+          right: max(8px, env(safe-area-inset-right));
+          display: inline-flex;
+          border-color: var(--blue);
+          box-shadow: 0 4px 18px rgba(0, 0, 0, .3);
+        }
         .pdf-page-scroll { padding: 8px; }
       }
 

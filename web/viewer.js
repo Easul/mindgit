@@ -213,32 +213,44 @@ async function renderPDFViewer(pdfPath) {
   let fitWidth = savedState.pdfFitWidth !== false;
   let renderGeneration = 0;
   let scrollSaveTimer = 0;
+  let resizeTimer = 0;
+  let lastLayoutWidth = 0;
   let renderQueue = [];
   let activeRenders = 0;
   let pageItems = [];
+  let resizeObserver = null;
   const renderTasks = new Set();
   let destroyed = false;
 
   $('viewer').innerHTML = `
     <div class="pdf-viewer" id="pdf-viewer" data-pdf-scale="${scale}" data-pdf-fit-width="${fitWidth}">
       <div class="pdf-controls">
-        <span class="pdf-page-count">${pdfDocument.numPages} pages</span>
+        <label class="pdf-page-jump">
+          <input id="pdf-page-number" type="number" min="1" max="${pdfDocument.numPages}" value="1" inputmode="numeric" aria-label="PDF page number">
+          <span>/ ${pdfDocument.numPages}</span>
+        </label>
+        <button id="pdf-jump" type="button">Jump</button>
         <span class="pdf-control-spacer"></span>
         <button id="pdf-zoom-out" type="button" title="Zoom out">−</button>
         <button id="pdf-fit" type="button" title="Fit width">Fit</button>
         <button id="pdf-zoom-in" type="button" title="Zoom in">+</button>
+        <button id="pdf-fullscreen" class="pdf-mobile-fullscreen" type="button">Fullscreen</button>
         <button id="pdf-download" type="button">Download</button>
       </div>
       <div class="pdf-page-scroll" id="pdf-page-scroll" tabindex="-1">
         <div class="pdf-page-status" id="pdf-page-status">Loading ${pdfDocument.numPages} pages...</div>
         <div class="pdf-pages" id="pdf-pages"></div>
       </div>
+      <button id="pdf-fullscreen-exit" class="pdf-fullscreen-exit" type="button">Exit Fullscreen</button>
     </div>`;
 
   const viewer = $('pdf-viewer');
   const scroll = $('pdf-page-scroll');
   const pages = $('pdf-pages');
   const status = $('pdf-page-status');
+  const pageNumberInput = $('pdf-page-number');
+  const fullscreenButton = $('pdf-fullscreen');
+  const fullscreenExitButton = $('pdf-fullscreen-exit');
 
   const persistState = () => {
     viewer.dataset.pdfScale = String(scale);
@@ -336,7 +348,36 @@ async function renderPDFViewer(pdfPath) {
     pumpRenderQueue();
   };
 
-  const buildPagePlaceholders = async ({ scrollTop = 0, scrollRatio = null } = {}) => {
+  const currentScrollAnchor = () => {
+    if (!pageItems.length) return null;
+    const targetTop = scroll.scrollTop + 1;
+    let low = 0;
+    let high = pageItems.length - 1;
+    let index = 0;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (pageItems[middle].element.offsetTop <= targetTop) {
+        index = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    const item = pageItems[index];
+    return {
+      pageNumber: item.pageNumber,
+      offsetRatio: Math.max(0, Math.min(1, (scroll.scrollTop - item.element.offsetTop) / Math.max(1, item.element.offsetHeight))),
+    };
+  };
+
+  const updateCurrentPageNumber = () => {
+    const anchor = currentScrollAnchor();
+    if (anchor && document.activeElement !== pageNumberInput) {
+      pageNumberInput.value = String(anchor.pageNumber);
+    }
+  };
+
+  const buildPagePlaceholders = async ({ scrollTop = 0, scrollRatio = null, anchor = null } = {}) => {
     const generation = ++renderGeneration;
     for (const task of renderTasks) task.cancel();
     renderTasks.clear();
@@ -379,33 +420,95 @@ async function renderPDFViewer(pdfPath) {
 
     if (destroyed || generation !== renderGeneration) return;
     const maxScrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
-    const targetScrollTop = scrollRatio === null
-      ? Number(scrollTop) || 0
-      : Math.max(0, Math.min(1, scrollRatio)) * maxScrollTop;
+    let targetScrollTop = Number(scrollTop) || 0;
+    if (anchor?.pageNumber) {
+      const anchorItem = pageItems[Math.min(pageItems.length - 1, Math.max(0, anchor.pageNumber - 1))];
+      targetScrollTop = anchorItem.element.offsetTop
+        + Math.max(0, Math.min(1, anchor.offsetRatio || 0)) * anchorItem.element.offsetHeight;
+    } else if (scrollRatio !== null) {
+      targetScrollTop = Math.max(0, Math.min(1, scrollRatio)) * maxScrollTop;
+    }
     scroll.scrollTop = Math.min(Math.max(0, targetScrollTop), maxScrollTop);
+    lastLayoutWidth = scroll.clientWidth;
+    updateCurrentPageNumber();
     status.hidden = true;
     queueNearbyPages();
   };
 
+  const jumpToPage = () => {
+    const pageNumber = Math.min(pdfDocument.numPages, Math.max(1, Number(pageNumberInput.value) || 1));
+    const item = pageItems[pageNumber - 1];
+    if (!item) return;
+    pageNumberInput.value = String(pageNumber);
+    scroll.scrollTop = item.element.offsetTop;
+    queueNearbyPages();
+    saveCurrentTabState();
+    saveWorkspaceState();
+  };
+
+  const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+  const syncFullscreenButton = () => {
+    const active = fullscreenElement() === viewer || viewer.classList.contains('pdf-fallback-fullscreen');
+    fullscreenButton.textContent = active ? 'Exit Fullscreen' : 'Fullscreen';
+    fullscreenButton.classList.toggle('active', active);
+  };
+
+  const exitPDFFullscreen = async () => {
+    if (viewer.classList.contains('pdf-fallback-fullscreen')) {
+      viewer.classList.remove('pdf-fallback-fullscreen');
+      delete document.documentElement.dataset.pdfFullscreen;
+      syncFullscreenButton();
+      return;
+    }
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (fullscreenElement() && exit) await exit.call(document);
+  };
+
+  const togglePDFFullscreen = async () => {
+    if (fullscreenElement() === viewer || viewer.classList.contains('pdf-fallback-fullscreen')) {
+      await exitPDFFullscreen();
+      return;
+    }
+    const request = viewer.requestFullscreen || viewer.webkitRequestFullscreen;
+    if (request) {
+      try {
+        await request.call(viewer);
+        return;
+      } catch {}
+    }
+    viewer.classList.add('pdf-fallback-fullscreen');
+    document.documentElement.dataset.pdfFullscreen = 'true';
+    syncFullscreenButton();
+  };
+
   $('pdf-zoom-out').addEventListener('click', async () => {
-    const scrollRatio = scroll.scrollTop / Math.max(1, scroll.scrollHeight - scroll.clientHeight);
+    const anchor = currentScrollAnchor();
     fitWidth = false;
     scale = Math.max(0.25, scale / 1.2);
-    await buildPagePlaceholders({ scrollRatio });
+    await buildPagePlaceholders({ anchor });
   });
   $('pdf-zoom-in').addEventListener('click', async () => {
-    const scrollRatio = scroll.scrollTop / Math.max(1, scroll.scrollHeight - scroll.clientHeight);
+    const anchor = currentScrollAnchor();
     fitWidth = false;
     scale = Math.min(4, scale * 1.2);
-    await buildPagePlaceholders({ scrollRatio });
+    await buildPagePlaceholders({ anchor });
   });
   $('pdf-fit').addEventListener('click', async () => {
-    const scrollRatio = scroll.scrollTop / Math.max(1, scroll.scrollHeight - scroll.clientHeight);
+    const anchor = currentScrollAnchor();
     fitWidth = true;
-    await buildPagePlaceholders({ scrollRatio });
+    await buildPagePlaceholders({ anchor });
   });
+  $('pdf-jump').addEventListener('click', jumpToPage);
+  pageNumberInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    jumpToPage();
+  });
+  fullscreenButton.addEventListener('click', () => togglePDFFullscreen());
+  fullscreenExitButton.addEventListener('click', () => exitPDFFullscreen());
   $('pdf-download').addEventListener('click', () => downloadFile(pdfPath));
   scroll.addEventListener('scroll', () => {
+    updateCurrentPageNumber();
     queueNearbyPages();
     window.clearTimeout(scrollSaveTimer);
     scrollSaveTimer = window.setTimeout(() => {
@@ -413,6 +516,22 @@ async function renderPDFViewer(pdfPath) {
       saveWorkspaceState();
     }, 250);
   }, { passive: true });
+  const handleFullscreenChange = () => {
+    if (fullscreenElement() !== viewer && viewer.classList.contains('pdf-fallback-fullscreen')) return;
+    syncFullscreenButton();
+  };
+  document.addEventListener('fullscreenchange', handleFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+  if (typeof ResizeObserver === 'function') {
+    lastLayoutWidth = scroll.clientWidth;
+    resizeObserver = new ResizeObserver(() => {
+      if (!fitWidth || destroyed || Math.abs(scroll.clientWidth - lastLayoutWidth) < 2) return;
+      const anchor = currentScrollAnchor();
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => buildPagePlaceholders({ anchor }), 120);
+    });
+    resizeObserver.observe(scroll);
+  }
   attachScrollableInteractionTarget(scroll);
 
   viewer.dataset.mindgitCleanup = 'true';
@@ -420,6 +539,13 @@ async function renderPDFViewer(pdfPath) {
     destroyed = true;
     renderGeneration += 1;
     window.clearTimeout(scrollSaveTimer);
+    window.clearTimeout(resizeTimer);
+    resizeObserver?.disconnect();
+    document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    if (fullscreenElement() === viewer || viewer.classList.contains('pdf-fallback-fullscreen')) {
+      exitPDFFullscreen().catch(() => {});
+    }
     for (const task of renderTasks) task.cancel();
     renderTasks.clear();
     loadingTask.destroy();
