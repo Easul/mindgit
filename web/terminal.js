@@ -93,18 +93,7 @@ function createTerminalClient(summary = null) {
     reconnectTimer: 0,
     ready: false,
     closed: Boolean(summary?.closed),
-    ime: {
-      composing: false,
-      pendingData: '',
-      fallbackData: '',
-      fallbackExpires: 0,
-      lastData: '',
-      lastDataAt: 0,
-      compositionData: '',
-      compositionStartedAt: 0,
-      compositionEndedAt: 0,
-      timer: 0,
-    },
+    ime: { composing: false, recoveryTimer: 0 },
   };
   terminalState.clients.set(temporaryId, client);
   configureTerminalInput(client);
@@ -204,77 +193,31 @@ function sendTerminalInput(client, data) {
 function configureTerminalInput(client) {
   const { terminal, ime } = client;
   const textarea = terminal.textarea;
-  const queueComposition = (data) => {
-    const value = String(data || '');
-    if (!value) return;
-    ime.pendingData = value;
-    if (ime.lastData === value && ime.lastDataAt >= ime.compositionStartedAt) {
-      ime.pendingData = '';
-      return;
-    }
-    window.clearTimeout(ime.timer);
-    ime.timer = window.setTimeout(() => {
-      if (!ime.pendingData) return;
-      ime.fallbackData = ime.pendingData;
-      ime.fallbackExpires = Date.now() + 500;
-      ime.pendingData = '';
-      sendTerminalInput(client, ime.fallbackData);
-    }, 60);
-  };
-  terminal.onData((data) => {
-    if (ime.pendingData && data === ime.pendingData) {
-      window.clearTimeout(ime.timer);
-      ime.pendingData = '';
-    } else if (ime.fallbackData && data === ime.fallbackData && Date.now() < ime.fallbackExpires) {
-      ime.fallbackData = '';
-      return;
-    }
-    ime.lastData = data;
-    ime.lastDataAt = Date.now();
-    sendTerminalInput(client, data);
-  });
+  terminal.onData((data) => sendTerminalInput(client, data));
   if (!textarea) return;
   textarea.addEventListener('compositionstart', () => {
     ime.composing = true;
-    ime.compositionData = '';
-    ime.compositionStartedAt = Date.now();
-    window.clearTimeout(ime.timer);
-    ime.pendingData = '';
+    window.clearTimeout(ime.recoveryTimer);
   });
-  textarea.addEventListener('compositionupdate', (event) => {
-    ime.compositionData = event.data || ime.compositionData;
-  });
-  textarea.addEventListener('beforeinput', (event) => {
-    if (!event.inputType?.includes('Composition')) return;
-    ime.compositionData = event.data || ime.compositionData;
-  });
-  textarea.addEventListener('input', (event) => {
-    const hasCompositionInputType = event.inputType?.includes('Composition');
-    const isCompositionInput = hasCompositionInputType
-      || event.isComposing
-      || ime.composing
-      || Date.now() - ime.compositionEndedAt < 100;
-    if (!isCompositionInput) return;
-    ime.compositionData = event.data || ime.compositionData;
-    if (!event.isComposing && hasCompositionInputType) {
-      ime.composing = false;
-      ime.compositionEndedAt = Date.now();
-      queueComposition(ime.compositionData);
-    } else if (!event.isComposing && !ime.composing) {
-      queueComposition(ime.compositionData);
-    }
-  });
-  textarea.addEventListener('compositionend', (event) => {
+  textarea.addEventListener('compositionend', () => {
     ime.composing = false;
-    ime.compositionEndedAt = Date.now();
-    ime.compositionData = event.data || ime.compositionData;
-    queueComposition(ime.compositionData);
+    window.clearTimeout(ime.recoveryTimer);
+    window.setTimeout(() => {
+      if (!ime.composing) textarea.value = '';
+    }, 0);
   });
   textarea.addEventListener('blur', () => {
     if (!ime.composing) return;
-    ime.composing = false;
-    ime.compositionEndedAt = Date.now();
-    queueComposition(ime.compositionData);
+    textarea.dispatchEvent(new CompositionEvent('compositionend', { data: '' }));
+  });
+  textarea.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || !ime.composing) return;
+    window.clearTimeout(ime.recoveryTimer);
+    ime.recoveryTimer = window.setTimeout(() => {
+      if (ime.composing) {
+        textarea.dispatchEvent(new CompositionEvent('compositionend', { data: textarea.value }));
+      }
+    }, 120);
   });
 }
 
@@ -468,6 +411,7 @@ async function closeTerminal(id) {
   if (!client) return;
   client.disposed = true;
   clearTimeout(client.reconnectTimer);
+  clearTimeout(client.ime?.recoveryTimer);
   client.socket?.close();
   client.cleanupScrollbar?.();
   client.terminal.dispose();
@@ -617,8 +561,12 @@ function syncTerminalViewport() {
   const viewport = window.visualViewport;
   const viewportHeight = Math.round(viewport?.height || window.innerHeight);
   const viewportTop = Math.round(viewport?.offsetTop || 0);
+  const viewportWidth = Math.round(viewport?.width || window.innerWidth);
+  const viewportLeft = Math.round(viewport?.offsetLeft || 0);
   document.documentElement.style.setProperty('--terminal-viewport-top', `${viewportTop}px`);
   document.documentElement.style.setProperty('--terminal-viewport-height', `${viewportHeight}px`);
+  document.documentElement.style.setProperty('--terminal-viewport-left', `${viewportLeft}px`);
+  document.documentElement.style.setProperty('--terminal-viewport-width', `${viewportWidth}px`);
   document.documentElement.style.setProperty('--terminal-mobile-max-height', `${Math.max(180, Math.floor(viewportHeight * 0.55))}px`);
   requestAnimationFrame(() => fitTerminal());
 }

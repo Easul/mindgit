@@ -562,6 +562,7 @@
       }
       .file-tab:hover { background: var(--button); color: var(--text); }
       .file-tab.active { background: var(--surface); border-color: var(--line); color: var(--text); }
+      .file-tab.temporary .file-tab-name { font-style: italic; }
       .file-tab button {
         border: 0;
         border-radius: 0;
@@ -2005,10 +2006,10 @@
           position: fixed;
           z-index: 100;
           top: var(--terminal-viewport-top, 0);
-          right: 0;
+          right: auto;
           bottom: auto;
-          left: 0;
-          width: 100vw;
+          left: var(--terminal-viewport-left, 0px);
+          width: var(--terminal-viewport-width, 100vw);
           height: var(--terminal-viewport-height, 100dvh);
           min-height: 0;
           border-top: 0;

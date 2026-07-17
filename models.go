@@ -40,6 +40,7 @@ type FileResponse struct {
 type SaveRequest struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
+	Create  bool   `json:"create,omitempty"`
 }
 
 type UploadResponse struct {
@@ -50,6 +51,11 @@ type UploadResponse struct {
 type CreatePathRequest struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
+}
+
+type RenamePathRequest struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
 }
 
 type DeletePathRequest struct {

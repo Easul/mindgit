@@ -183,13 +183,16 @@ function renderFileTabs() {
 
   tabsContainer.style.display = 'flex';
   tabsContainer.innerHTML = state.openTabs.map(path => {
-    const fileName = path.includes('/') ? path.split('/').pop() : path;
+    const temporary = isTemporaryTab(path);
+    const fileName = temporary
+      ? state.temporaryTabs.get(path)?.name || 'Untitled'
+      : path.includes('/') ? path.split('/').pop() : path;
     const isActive = path === state.selected;
     const mode = currentModeForPath(path);
     const menuIconMode = isActive && mode === 'edit' ? 'save' : mode;
     const menuLabel = menuIconMode === 'save' ? 'Save' : modeLabel(mode);
     return `
-      <div class="file-tab ${isActive ? 'active' : ''}" title="${escapeHTML(path)}">
+      <div class="file-tab ${isActive ? 'active' : ''} ${temporary ? 'temporary' : ''}" title="${escapeHTML(temporary ? `${fileName} (temporary)` : path)}">
         <button class="file-tab-menu-button" type="button" data-tab-menu="${escapeAttr(path)}" title="${escapeAttr(menuLabel)} actions" aria-label="${escapeAttr(menuLabel)} actions for ${escapeAttr(fileName)}">
           ${modeIcon(menuIconMode)}
         </button>
@@ -202,7 +205,7 @@ function renderFileTabs() {
 
   tabsContainer.querySelectorAll('[data-tab-path]').forEach(tab => {
     tab.addEventListener('click', async (e) => {
-      await selectFile(tab.dataset.tabPath);
+      await selectTab(tab.dataset.tabPath);
     });
   });
 
@@ -224,15 +227,18 @@ function renderFileTabs() {
 function closeTab(path) {
   const index = state.openTabs.indexOf(path);
   if (index === -1) return;
+  const temporary = isTemporaryTab(path);
 
   if (path === state.selected) saveCurrentTabState();
   state.openTabs.splice(index, 1);
   delete state.tabDrafts[path];
+  if (temporary) delete state.tabStates[path];
+  state.temporaryTabs.delete(path);
 
   if (path === state.selected) {
     if (state.openTabs.length > 0) {
       const newIndex = index > 0 ? index - 1 : 0;
-      selectFile(state.openTabs[newIndex]);
+      selectTab(state.openTabs[newIndex]);
     } else {
       state.selected = null;
       state.mode = 'full';
@@ -390,7 +396,7 @@ async function selectFile(path, options = {}) {
     removeUnavailablePath(path);
     const fallbackPath = state.openTabs[0] || '';
     if (fallbackPath) {
-      await selectFile(fallbackPath);
+      await selectTab(fallbackPath);
       return;
     }
 
@@ -404,6 +410,26 @@ async function selectFile(path, options = {}) {
     saveWorkspaceState();
     notifyEmbedState();
   }
+}
+
+async function selectTab(path, options = {}) {
+  if (!isTemporaryTab(path)) {
+    await selectFile(path, options);
+    return;
+  }
+
+  saveCurrentTabState();
+  if (!state.temporaryTabs.has(path)) return;
+  state.selected = path;
+  state.mode = 'edit';
+  state.mobileViewerExpanded = false;
+  state.editorReady = false;
+  syncLayoutState();
+  renderStatus();
+  renderFileTabs();
+  await renderSelected();
+  restoreTabState(path);
+  saveWorkspaceState();
 }
 
 function groupForPath(path) {
@@ -437,6 +463,7 @@ async function ensurePathVisible(path) {
 }
 
 function currentModeForPath(path) {
+  if (isTemporaryTab(path)) return 'edit';
   if (path === state.selected) return state.mode;
   return state.tabStates[path]?.mode || 'full';
 }
@@ -460,6 +487,14 @@ function isMobileLayout() {
 }
 
 function openTabMenu(anchor, path) {
+  if (isTemporaryTab(path)) {
+    showActionMenu(anchor, [
+      { label: 'Save As...', action: () => saveTemporaryTab(path) },
+      { separator: true },
+      { label: 'Close Tab', action: () => closeTab(path) },
+    ]);
+    return;
+  }
   const mode = currentModeForPath(path);
   const isLiveEdit = path === state.selected && state.mode === 'edit';
   const gitAvailable = state.status?.gitAvailable !== false;
@@ -557,6 +592,8 @@ function openTreeMenu(anchor, path, kind) {
 
   if (!path && !state.embed) {
     items.push(
+      { label: 'New Temporary Tab', action: () => createTemporaryTab() },
+      { separator: true },
       { label: 'Open Terminal', action: () => openTerminalPanel() },
       { label: 'New Terminal', action: () => openTerminalPanel({ newTab: true }) },
       { separator: true },
@@ -579,11 +616,24 @@ function openTreeMenu(anchor, path, kind) {
   if (path) {
     items.push(
       { separator: true },
+      { label: 'Rename', action: () => promptRenamePath(path, kind === 'dir') },
       { label: 'Delete', danger: true, action: () => deletePath(path, kind === 'dir') },
     );
   }
 
   showActionMenu(anchor, items);
+}
+
+function createTemporaryTab() {
+  const existingNumbers = [...state.temporaryTabs.values()]
+    .map((tab) => Number(tab.number) || 0);
+  const number = Math.max(0, ...existingNumbers) + 1;
+  const id = `${temporaryTabPrefix}${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  state.temporaryTabs.set(id, { name: `Untitled ${number}`, number });
+  state.tabDrafts[id] = '';
+  state.tabStates[id] = { mode: 'edit' };
+  state.openTabs.push(id);
+  selectTab(id, { restoreState: false });
 }
 
 function promptUploadFiles(directory) {
@@ -824,6 +874,83 @@ async function createPath(path, kind) {
   }
 }
 
+async function promptRenamePath(path, isDir) {
+  const currentName = displayName(path);
+  const input = await showPromptDialog({
+    title: `Rename ${isDir ? 'Folder' : 'File'}`,
+    message: `Enter a new name for "${currentName}".`,
+    value: currentName,
+    placeholder: currentName,
+    confirmLabel: 'Rename',
+    cancelLabel: 'Cancel',
+  });
+  if (input === null) return;
+  const name = input.trim();
+  if (!name) {
+    setMessage('Name is required', 'error');
+    return;
+  }
+  if (name.includes('/') || name.includes('\\')) {
+    setMessage('Name must not contain path separators', 'error');
+    return;
+  }
+  if (name === currentName) return;
+  await renamePath(path, name);
+}
+
+function renamedPath(path, source, destination) {
+  if (!isPathInside(path, source)) return path;
+  return `${destination}${path.slice(source.length)}`;
+}
+
+function remapPathObjectEntries(entries, source, destination) {
+  return Object.fromEntries(Object.entries(entries).map(([path, value]) => [
+    renamedPath(path, source, destination),
+    value,
+  ]));
+}
+
+async function renamePath(path, name) {
+  const parent = groupForPath(path);
+  const destination = parent ? `${parent}/${name}` : name;
+
+  try {
+    saveCurrentTabState();
+    setMessage('Renaming...');
+    state.status = await api('/api/fs', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, name }),
+    });
+
+    state.openTabs = state.openTabs.map((tabPath) => renamedPath(tabPath, path, destination));
+    state.tabStates = remapPathObjectEntries(state.tabStates, path, destination);
+    state.tabDrafts = remapPathObjectEntries(state.tabDrafts, path, destination);
+    state.expandedGroups = new Set([...state.expandedGroups].map((group) => renamedPath(group, path, destination)));
+    state.selected = state.selected ? renamedPath(state.selected, path, destination) : null;
+    state.splitPane.tabs = state.splitPane.tabs.map((tabPath) => renamedPath(tabPath, path, destination));
+    state.splitPane.selectedPath = state.splitPane.selectedPath
+      ? renamedPath(state.splitPane.selectedPath, path, destination)
+      : '';
+    state.children = new Map();
+
+    await refreshLoadedGroups();
+    renderStatus();
+    renderFileTabs();
+    renderSplitPane();
+    if (state.selected) {
+      await renderSelected();
+      restoreTabState(state.selected);
+    }
+    syncLayoutState();
+    saveWorkspaceState();
+    notifyEmbedState();
+    setMessage('Renamed', 'ok');
+  } catch (error) {
+    setMessage(error.message, 'error');
+  }
+}
+
 async function deletePath(path, isDir) {
   const target = isDir ? 'folder' : 'file';
   const confirmed = await showConfirmDialog({
@@ -870,7 +997,7 @@ async function deletePath(path, isDir) {
       state.mode = 'full';
       state.editorReady = false;
       if (state.openTabs.length) {
-        await selectFile(state.openTabs[0]);
+        await selectTab(state.openTabs[0]);
       } else {
         $('viewer').innerHTML = '<div class="empty">No file selected</div>';
         if ($('review-summary')) {

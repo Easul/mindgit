@@ -131,6 +131,105 @@ func TestHandleUploadFileRejectsExistingPath(t *testing.T) {
 	}
 }
 
+func TestHandleSaveFileCreatesNewFileExclusively(t *testing.T) {
+	root := t.TempDir()
+	app := testRequestApp(root)
+
+	response := newTestResponse()
+	body := strings.NewReader(`{"path":"notes/临时.txt","content":"临时内容","create":true}`)
+	app.handleSaveFile(response, newTestRequest(t, http.MethodPost, "/api/file", body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", response.Code, response.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(root, "notes", "临时.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "临时内容" {
+		t.Fatalf("content = %q, want 临时内容", content)
+	}
+
+	response = newTestResponse()
+	body = strings.NewReader(`{"path":"notes/临时.txt","content":"覆盖","create":true}`)
+	app.handleSaveFile(response, newTestRequest(t, http.MethodPost, "/api/file", body))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	content, err = os.ReadFile(filepath.Join(root, "notes", "临时.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "临时内容" {
+		t.Fatalf("existing content changed to %q", content)
+	}
+}
+
+func TestHandleRenamePathRenamesFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "old.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	response := newTestResponse()
+	body := strings.NewReader(`{"path":"old.txt","name":"新名字.txt"}`)
+	testRequestApp(root).handleRenamePath(response, newTestRequest(t, http.MethodPatch, "/api/fs", body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", response.Code, response.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(root, "新名字.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "hello" {
+		t.Fatalf("content = %q, want hello", content)
+	}
+	if _, err := os.Stat(filepath.Join(root, "old.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old path still exists or stat failed: %v", err)
+	}
+}
+
+func TestHandleRenamePathRenamesDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "old", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "old", "nested", "file.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	response := newTestResponse()
+	body := strings.NewReader(`{"path":"old","name":"new"}`)
+	testRequestApp(root).handleRenamePath(response, newTestRequest(t, http.MethodPatch, "/api/fs", body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "new", "nested", "file.txt")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHandleRenamePathRejectsInvalidOrExistingName(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"old.txt", "existing.txt"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []string{
+		`{"path":"old.txt","name":"existing.txt"}`,
+		`{"path":"old.txt","name":"nested/new.txt"}`,
+		`{"path":"old.txt","name":".git"}`,
+	}
+	for _, body := range tests {
+		response := newTestResponse()
+		testRequestApp(root).handleRenamePath(response, newTestRequest(t, http.MethodPatch, "/api/fs", strings.NewReader(body)))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: status = %d, want %d; response=%s", body, response.Code, http.StatusBadRequest, response.Body.String())
+		}
+	}
+}
+
 func assertNoUploadParts(t *testing.T, directory string) {
 	t.Helper()
 	entries, err := os.ReadDir(directory)

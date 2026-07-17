@@ -60,6 +60,14 @@ async function renderSelected() {
     ? state.tabDrafts[state.selected]
     : null;
 
+  if (isTemporaryTab(state.selected)) {
+    if ($('review-summary')) {
+      $('review-summary').textContent = 'Temporary text tab. Press Ctrl+S to choose a path and save it as a file.';
+    }
+    renderTextEditor(draftContent || '');
+    return;
+  }
+
   const file = state.status.files.find((item) => item.path === state.selected);
   if ($('review-summary')) {
     $('review-summary').textContent = file
@@ -87,32 +95,8 @@ async function renderSelected() {
       return;
     }
 
-    state.editorReady = false;
-    updateEditButton('Loading...', { disabled: true, primary: true });
     const content = draftContent ?? (await api(`/api/file?path=${encodeURIComponent(state.selected)}`)).content;
-    state.content = content;
-    const lineNumbers = renderLineNumberSpans(splitEditorLines(content).length, 'editor-line-num');
-
-    $('viewer').innerHTML = `<div class="editor-wrapper">
-      <div class="editor-line-gutter" id="editor-line-gutter">
-        <div class="editor-line-numbers" id="editor-line-numbers">${lineNumbers}</div>
-      </div>
-      <div class="editor-scroll-area">
-        <div class="editor-current-line-highlight" id="editor-line-highlight" style="display: none;"></div>
-        <pre class="editor-highlight ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor-highlight" aria-hidden="true"></pre>
-        <textarea class="editor ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor" spellcheck="false"></textarea>
-      </div>
-    </div>`;
-
-    const editor = $('editor');
-    editor.value = content;
-
-    editor.focus();
-    setupEditorShortcuts(editor);
-    editor.dispatchEvent(new Event('input'));
-    state.editorReady = true;
-    updateEditButton('Save', { disabled: state.saveInProgress, primary: true });
-    syncViewerHeight();
+    renderTextEditor(content);
     return;
   }
 
@@ -141,6 +125,33 @@ async function renderSelected() {
     $('viewer').innerHTML = `<pre tabindex="-1">${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
     attachScrollableInteractionTarget(getViewerScrollTarget());
   }
+  syncViewerHeight();
+}
+
+function renderTextEditor(content) {
+  state.editorReady = false;
+  updateEditButton('Loading...', { disabled: true, primary: true });
+  state.content = content;
+  const lineNumbers = renderLineNumberSpans(splitEditorLines(content).length, 'editor-line-num');
+
+  $('viewer').innerHTML = `<div class="editor-wrapper">
+    <div class="editor-line-gutter" id="editor-line-gutter">
+      <div class="editor-line-numbers" id="editor-line-numbers">${lineNumbers}</div>
+    </div>
+    <div class="editor-scroll-area">
+      <div class="editor-current-line-highlight" id="editor-line-highlight" style="display: none;"></div>
+      <pre class="editor-highlight ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor-highlight" aria-hidden="true"></pre>
+      <textarea class="editor ${state.wordWrap ? 'wrap-enabled' : 'wrap-disabled'}" id="editor" spellcheck="false"></textarea>
+    </div>
+  </div>`;
+
+  const editor = $('editor');
+  editor.value = content;
+  editor.focus();
+  setupEditorShortcuts(editor);
+  editor.dispatchEvent(new Event('input'));
+  state.editorReady = true;
+  updateEditButton('Save', { disabled: state.saveInProgress, primary: true });
   syncViewerHeight();
 }
 
@@ -710,6 +721,10 @@ function cleanupViewerArtifacts() {
 
 async function saveFile() {
   if (!state.selected || state.saveInProgress) return;
+  if (isTemporaryTab(state.selected)) {
+    await saveTemporaryTab(state.selected);
+    return;
+  }
   try {
     state.saveInProgress = true;
     setMessage('Saving...');
@@ -747,6 +762,73 @@ async function saveFile() {
       disabled: state.mode === 'edit' ? !state.editorReady : false,
       primary: state.mode === 'edit',
     });
+  }
+}
+
+async function saveTemporaryTab(path) {
+  if (!isTemporaryTab(path) || state.saveInProgress) return;
+  if (state.selected !== path) await selectTab(path);
+
+  const temporary = state.temporaryTabs.get(path);
+  if (!temporary) return;
+  const input = await showPromptDialog({
+    title: 'Save Temporary Tab',
+    message: 'Enter a path relative to the project root.',
+    value: '',
+    placeholder: 'notes/scratch.txt',
+    confirmLabel: 'Save',
+    cancelLabel: 'Cancel',
+  });
+  if (input === null) return;
+  const savePath = resolveCreatePath('', input);
+  if (!savePath) {
+    setMessage('Path is required', 'error');
+    return;
+  }
+
+  const editor = $('editor');
+  const content = editor ? editor.value : state.tabDrafts[path] || '';
+  const cursorStart = editor ? editor.selectionStart : 0;
+  const cursorEnd = editor ? editor.selectionEnd : 0;
+
+  try {
+    state.saveInProgress = true;
+    setMessage('Saving...');
+    updateEditButton('Saving...', { disabled: true, primary: true });
+    const status = await api('/api/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: savePath, content, create: true }),
+    });
+
+    const index = state.openTabs.indexOf(path);
+    if (index !== -1) state.openTabs[index] = savePath;
+    state.selected = savePath;
+    state.tabStates[savePath] = state.tabStates[path] || { mode: 'edit' };
+    state.tabStates[savePath].mode = 'edit';
+    state.tabDrafts[savePath] = content;
+    delete state.tabStates[path];
+    delete state.tabDrafts[path];
+    state.temporaryTabs.delete(path);
+    state.content = content;
+    state.status = status;
+    for (const ancestor of ancestorPaths(savePath)) state.expandedGroups.add(ancestor);
+    await refreshLoadedGroups();
+    renderStatus();
+    renderFileTabs();
+    syncLayoutState();
+    saveWorkspaceState();
+    notifyEmbedState();
+    if (editor) {
+      editor.focus();
+      editor.setSelectionRange(cursorStart, cursorEnd);
+    }
+    setMessage('Saved', 'ok');
+  } catch (error) {
+    setMessage(error.message, 'error');
+  } finally {
+    state.saveInProgress = false;
+    updateEditButton('Save', { disabled: !state.editorReady, primary: true });
   }
 }
 

@@ -10,6 +10,11 @@ function systemThemePreference() {
 }
 
 const initialParams = new URLSearchParams(window.location.search);
+const temporaryTabPrefix = 'mindgit-temporary:';
+
+function isTemporaryTab(path) {
+  return typeof path === 'string' && path.startsWith(temporaryTabPrefix);
+}
 
 const state = {
   view: 'worktree',
@@ -48,6 +53,7 @@ const state = {
   openTabs: [],
   tabStates: {},
   tabDrafts: {},
+  temporaryTabs: new Map(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -69,13 +75,17 @@ function uniquePaths(paths) {
 
 function normalizeProjectWorkspace(parsed = {}) {
   const splitPane = parsed.splitPane || {};
-  const selectedPath = typeof splitPane.selectedPath === 'string'
+  const rawSelectedPath = typeof splitPane.selectedPath === 'string'
     ? splitPane.selectedPath
     : typeof splitPane.path === 'string'
       ? splitPane.path
       : '';
-  const openTabs = uniquePaths([...(parsed.openTabs || []), parsed.selected]);
-  const splitTabs = uniquePaths([...(splitPane.tabs || []), selectedPath]);
+  const selectedPath = isTemporaryTab(rawSelectedPath) ? '' : rawSelectedPath;
+  const savedSelected = typeof parsed.selected === 'string' && !isTemporaryTab(parsed.selected)
+    ? parsed.selected
+    : null;
+  const openTabs = uniquePaths([...(parsed.openTabs || []), savedSelected]).filter((path) => !isTemporaryTab(path));
+  const splitTabs = uniquePaths([...(splitPane.tabs || []), selectedPath]).filter((path) => !isTemporaryTab(path));
   const selectedCommitHash = typeof parsed.selectedCommitHash === 'string'
     ? parsed.selectedCommitHash
     : typeof parsed.selectedCommit?.hash === 'string'
@@ -83,11 +93,13 @@ function normalizeProjectWorkspace(parsed = {}) {
       : null;
   return {
     view: parsed.view === 'history' ? 'history' : 'worktree',
-    selected: typeof parsed.selected === 'string' ? parsed.selected : null,
+    selected: savedSelected,
     mode: normalizeMode(parsed.mode),
     mobileViewerExpanded: Boolean(parsed.mobileViewerExpanded),
     openTabs,
-    tabStates: parsed.tabStates && typeof parsed.tabStates === 'object' ? parsed.tabStates : {},
+    tabStates: parsed.tabStates && typeof parsed.tabStates === 'object'
+      ? Object.fromEntries(Object.entries(parsed.tabStates).filter(([path]) => !isTemporaryTab(path)))
+      : {},
     expandedGroups: uniquePaths(parsed.expandedGroups || []),
     splitPane: {
       open: Boolean(splitPane.open && selectedPath),
@@ -173,6 +185,7 @@ function applyProjectWorkspace(projectKey) {
   state.openTabs = saved.openTabs;
   state.tabStates = saved.tabStates;
   state.tabDrafts = {};
+  state.temporaryTabs = new Map();
   state.expandedGroups = new Set(saved.expandedGroups);
   state.splitPane = saved.splitPane;
   state.children = new Map();

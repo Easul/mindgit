@@ -276,9 +276,39 @@ func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
+	if isGitPath(path) {
+		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
 
 	fullPath := filepath.Join(app.root, path)
-	if err := os.WriteFile(fullPath, []byte(req.Content), 0o644); err != nil {
+	if req.Create {
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		file, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				file.Close()
+				os.Remove(fullPath)
+			}
+		}()
+		if _, err := file.WriteString(req.Content); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if err := file.Close(); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		committed = true
+	} else if err := os.WriteFile(fullPath, []byte(req.Content), 0o644); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
@@ -340,6 +370,76 @@ func (a App) handleCreatePath(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		writeJSON(w, nil, errors.New("kind must be file or dir"))
+		return
+	}
+
+	status, err := app.status()
+	writeJSON(w, status, err)
+}
+
+func (a App) handleRenamePath(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	var req RenamePathRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	path, err := app.cleanPath(req.Path)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	name, err := cleanUploadName(req.Name)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if isGitPath(path) {
+		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
+
+	parent := filepath.Dir(path)
+	destination := filepath.Join(parent, name)
+	if isGitPath(destination) {
+		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
+	if filepath.Base(path) == name {
+		writeJSON(w, nil, errors.New("new name must be different"))
+		return
+	}
+
+	resolvedParent, err := app.existingDirectory(parent)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	sourcePath := filepath.Join(resolvedParent, filepath.Base(path))
+	destinationPath := filepath.Join(resolvedParent, name)
+	if _, err := os.Lstat(sourcePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeJSON(w, nil, fmt.Errorf("path does not exist: %s", path))
+			return
+		}
+		writeJSON(w, nil, err)
+		return
+	}
+	if _, err := os.Lstat(destinationPath); err == nil {
+		writeJSON(w, nil, fmt.Errorf("path already exists: %s", filepath.ToSlash(destination)))
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	if err := os.Rename(sourcePath, destinationPath); err != nil {
+		writeJSON(w, nil, err)
 		return
 	}
 
