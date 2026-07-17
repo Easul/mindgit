@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,7 +20,7 @@ func (a App) handleTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gitAvailable, changes, err := app.loadGitChanges()
+	gitAvailable, changes, err := app.loadGitChangesCached()
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -63,7 +62,7 @@ func (a App) handleTreeBatch(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, path)
 	}
 
-	gitAvailable, changes, err := app.loadGitChanges()
+	gitAvailable, changes, err := app.loadGitChangesCached()
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -135,6 +134,9 @@ func (a App) status() (StatusResponse, error) {
 
 func (a App) loadGitChanges() (bool, []ChangedFile, error) {
 	if !a.isGitRepository() {
+		if a.sshName != "" {
+			a.cache.storeGit(a.defaultProject, false, nil)
+		}
 		return false, nil, nil
 	}
 
@@ -142,7 +144,19 @@ func (a App) loadGitChanges() (bool, []ChangedFile, error) {
 	if err != nil {
 		return false, nil, err
 	}
+	if a.sshName != "" {
+		a.cache.storeGit(a.defaultProject, true, files)
+	}
 	return true, files, nil
+}
+
+func (a App) loadGitChangesCached() (bool, []ChangedFile, error) {
+	if a.sshName != "" {
+		if gitAvailable, files, ok := a.cache.loadGit(a.defaultProject); ok {
+			return gitAvailable, files, nil
+		}
+	}
+	return a.loadGitChanges()
 }
 
 func (a App) changes() ([]ChangedFile, error) {
@@ -166,8 +180,7 @@ func (a App) changeMap(changes []ChangedFile) map[string]ChangedFile {
 }
 
 func (a App) treeEntries(path string, changes []ChangedFile, gitAvailable bool) ([]ChangedFile, error) {
-	fullPath := filepath.Join(a.root, path)
-	entries, err := os.ReadDir(fullPath)
+	entries, err := a.listProjectDirectory(path)
 	if err != nil {
 		return nil, err
 	}
@@ -178,17 +191,17 @@ func (a App) treeEntries(path string, changes []ChangedFile, gitAvailable bool) 
 	seen := map[string]bool{}
 
 	for _, entry := range entries {
-		if path == "" && entry.Name() == ".git" {
+		if path == "" && entry.Name == ".git" {
 			continue
 		}
-		relPath := entry.Name()
+		relPath := entry.Name
 		if path != "" {
-			relPath = path + "/" + entry.Name()
+			relPath = path + "/" + entry.Name
 		}
 
 		file := byPath[relPath]
 		file.Path = relPath
-		file.IsDir = entry.IsDir()
+		file.IsDir = entry.IsDir
 		if file.IsDir {
 			file.Status, file.Staged, file.Unstaged = strongestDescendantState(relPath, changes)
 		}
@@ -204,7 +217,10 @@ func (a App) treeEntries(path string, changes []ChangedFile, gitAvailable bool) 
 		files = append(files, change)
 	}
 
-	ignored := a.ignoredSet(checkPaths, gitAvailable)
+	ignored := map[string]bool{}
+	if a.sshName == "" {
+		ignored = a.ignoredSet(checkPaths, gitAvailable)
+	}
 	for i := range files {
 		if ignored[files[i].Path] {
 			files[i].Ignored = true

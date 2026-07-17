@@ -561,7 +561,7 @@ async function editOrSaveTab(path) {
 }
 
 function copyPath(path, absolute) {
-  const text = absolute ? absolutePathFor(path) : path;
+  const text = absolute ? absolutePathFor(path) : (path || '.');
   writeClipboard(text);
   setMessage(absolute ? 'Copied absolute path' : 'Copied relative path', 'ok');
 }
@@ -569,6 +569,7 @@ function copyPath(path, absolute) {
 function absolutePathFor(path) {
   const root = state.status?.root || '';
   if (!root) return path;
+  if (!path) return root;
   const separator = root.includes('\\') && !root.includes('/') ? '\\' : '/';
   const cleanRoot = root.replace(/[\\/]+$/, '');
   const cleanPath = separator === '\\' ? path.replaceAll('/', '\\') : path;
@@ -596,14 +597,24 @@ function openTreeMenu(anchor, path, kind) {
       { separator: true },
       { label: 'Open Terminal', action: () => openTerminalPanel() },
       { label: 'New Terminal', action: () => openTerminalPanel({ newTab: true }) },
-      { separator: true },
     );
+    for (const connection of state.sshConnections || []) {
+      items.push({
+        label: `SSH: ${connection.name}`,
+        disabled: !connection.configured,
+        action: () => openTerminalPanel({ newTab: true, sshName: connection.name }),
+      });
+    }
+    items.push({ separator: true });
   }
 
   items.push(
     { label: 'New File', action: () => promptCreatePath(basePath, 'file') },
     { label: 'New Folder', action: () => promptCreatePath(basePath, 'dir') },
     { label: 'Upload Files', action: () => promptUploadFiles(basePath) },
+    { separator: true },
+    { label: 'Copy Relative Path', action: () => copyPath(path, false) },
+    { label: 'Copy Absolute Path', action: () => copyPath(path, true) },
   );
 
   if (kind === 'file' && path) {

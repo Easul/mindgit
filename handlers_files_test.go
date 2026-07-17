@@ -12,7 +12,7 @@ import (
 )
 
 func testRequestApp(root string) App {
-	projects := buildProjects([]string{root})
+	projects := buildProjects([]string{root}, SSHConfig{})
 	return App{
 		root:           root,
 		projects:       projects,

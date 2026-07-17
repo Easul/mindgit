@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,6 +33,16 @@ func (a App) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a App) search(query string) ([]SearchResult, error) {
+	if a.sshName != "" {
+		out, err := a.run("rg", "--line-number", "--column", "--no-heading", "--color", "never", "--", query)
+		if err != nil {
+			if isExitCode(err, 1) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("remote search requires ripgrep (rg): %w", err)
+		}
+		return parseSearch(out), nil
+	}
 	// Try using ripgrep first
 	if _, err := exec.LookPath("rg"); err == nil {
 		out, err := a.run("rg", "--line-number", "--column", "--no-heading", "--color", "never", "--", query)

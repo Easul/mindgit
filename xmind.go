@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -32,7 +31,7 @@ func (a App) handleXMindFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := os.ReadFile(filepath.Join(app.root, path))
+	content, err := app.readProjectFile(path)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return

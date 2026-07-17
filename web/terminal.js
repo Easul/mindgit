@@ -47,18 +47,20 @@ function syncTerminalTheme() {
   }
 }
 
-function terminalWebSocketURL(id = '') {
+function terminalWebSocketURL(client, id = '') {
   const url = new URL('/api/terminal', window.location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   if (id) {
     url.searchParams.set('id', id);
+  } else if (client?.sshName) {
+    url.searchParams.set('ssh', client.sshName);
   } else if (state.currentProjectKey) {
     url.searchParams.set('project', state.currentProjectKey);
   }
   return url.toString();
 }
 
-function createTerminalClient(summary = null) {
+function createTerminalClient(summary = null, options = {}) {
   const temporaryId = summary?.id || `pending-${Date.now()}-${Math.random()}`;
   const host = document.createElement('div');
   host.className = 'terminal-host';
@@ -84,6 +86,7 @@ function createTerminalClient(summary = null) {
     title: summary?.title || 'Starting…',
     projectKey: summary?.projectKey || state.currentProjectKey,
     project: summary?.project || currentProject()?.name || '',
+    sshName: summary?.sshName || options.sshName || '',
     terminal,
     fit,
     host,
@@ -130,7 +133,7 @@ function configureTerminalScrollbar(host) {
 
 function connectTerminal(client, existingId) {
   if (client.disposed) return;
-  const socket = new WebSocket(terminalWebSocketURL(existingId));
+  const socket = new WebSocket(terminalWebSocketURL(client, existingId));
   socket.binaryType = 'arraybuffer';
   client.socket = socket;
   client.ready = false;
@@ -450,12 +453,12 @@ async function openTerminalPanel(options = {}) {
   applyTerminalHeight();
   await loadTerminalSessions();
   let active = null;
-  if (!options.newTab) {
+  if (!options.newTab && !options.sshName) {
     active = [...terminalState.clients.values()].find((client) => (
       client.projectKey === state.currentProjectKey && !client.closed
     ));
   }
-  if (!active) active = createTerminalClient();
+  if (!active) active = createTerminalClient(null, { sshName: options.sshName || '' });
   if (active) activateTerminal(active.id);
 }
 

@@ -18,6 +18,13 @@ type terminalWindowSize struct {
 }
 
 func startPTY(root string) (*os.File, *exec.Cmd, error) {
+	command := exec.Command(terminalShell())
+	command.Dir = root
+	command.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	return startPTYCommand(command)
+}
+
+func startPTYCommand(command *exec.Cmd) (*os.File, *exec.Cmd, error) {
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open terminal: %w", err)
@@ -38,9 +45,6 @@ func startPTY(root string) (*os.File, *exec.Cmd, error) {
 		return nil, nil, fmt.Errorf("open terminal slave: %w", err)
 	}
 
-	command := exec.Command(terminalShell())
-	command.Dir = root
-	command.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	command.Stdin = slave
 	command.Stdout = slave
 	command.Stderr = slave

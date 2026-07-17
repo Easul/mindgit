@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const maxPDFPreviewSize int64 = 40 << 20
@@ -52,8 +54,7 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath := filepath.Join(app.root, path)
-	content, err := os.ReadFile(fullPath)
+	content, err := app.readProjectFile(path)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -92,6 +93,21 @@ func (a App) handleDownload(w http.ResponseWriter, r *http.Request) {
 	path, err := app.cleanPath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeJSON(w, nil, err)
+		return
+	}
+	if app.sshName != "" {
+		content, err := app.readProjectFile(path)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
+		if contentType == "" {
+			contentType = http.DetectContentType(content)
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(path)}))
+		http.ServeContent(w, r, filepath.Base(path), time.Time{}, bytes.NewReader(content))
 		return
 	}
 
@@ -146,6 +162,21 @@ func (a App) handlePDFFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, errors.New("PDF preview only supports .pdf files"))
 		return
 	}
+	if app.sshName != "" {
+		content, err := app.readProjectFile(path)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if int64(len(content)) > maxPDFPreviewSize {
+			writeJSON(w, nil, fmt.Errorf("PDF preview is limited to 40 MB; this file is %.1f MB", float64(len(content))/(1<<20)))
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": filepath.Base(path)}))
+		http.ServeContent(w, r, filepath.Base(path), time.Time{}, bytes.NewReader(content))
+		return
+	}
 
 	file, err := os.Open(filepath.Join(app.root, path))
 	if err != nil {
@@ -196,6 +227,19 @@ func (a App) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	relativePath := filepath.Join(directory, name)
 	if isGitPath(relativePath) {
 		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
+	if app.sshName != "" {
+		content, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if err := app.writeProjectFile(filepath.ToSlash(relativePath), content, true); err != nil {
+			writeUploadError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, UploadResponse{Path: filepath.ToSlash(relativePath), Size: int64(len(content))}, nil)
 		return
 	}
 	targetDirectory, err := app.existingDirectory(directory)
@@ -281,36 +325,43 @@ func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath := filepath.Join(app.root, path)
-	if req.Create {
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+	if app.sshName != "" {
+		if err := app.writeProjectFile(path, []byte(req.Content), req.Create); err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
-		file, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if err != nil {
-			writeJSON(w, nil, err)
-			return
-		}
-		committed := false
-		defer func() {
-			if !committed {
-				file.Close()
-				os.Remove(fullPath)
+	} else {
+		fullPath := filepath.Join(app.root, path)
+		if req.Create {
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+				writeJSON(w, nil, err)
+				return
 			}
-		}()
-		if _, err := file.WriteString(req.Content); err != nil {
+			file, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			committed := false
+			defer func() {
+				if !committed {
+					file.Close()
+					os.Remove(fullPath)
+				}
+			}()
+			if _, err := file.WriteString(req.Content); err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			if err := file.Close(); err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			committed = true
+		} else if err := os.WriteFile(fullPath, []byte(req.Content), 0o644); err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
-		if err := file.Close(); err != nil {
-			writeJSON(w, nil, err)
-			return
-		}
-		committed = true
-	} else if err := os.WriteFile(fullPath, []byte(req.Content), 0o644); err != nil {
-		writeJSON(w, nil, err)
-		return
 	}
 
 	status, err := app.status()
@@ -336,6 +387,19 @@ func (a App) handleCreatePath(w http.ResponseWriter, r *http.Request) {
 	}
 	if isGitPath(path) {
 		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
+	if app.sshName != "" {
+		if req.Kind != "file" && req.Kind != "dir" {
+			writeJSON(w, nil, errors.New("kind must be file or dir"))
+			return
+		}
+		if err := app.createRemotePath(path, req.Kind); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		status, err := app.status()
+		writeJSON(w, status, err)
 		return
 	}
 
@@ -414,6 +478,15 @@ func (a App) handleRenamePath(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, errors.New("new name must be different"))
 		return
 	}
+	if app.sshName != "" {
+		if err := app.renameRemotePath(filepath.ToSlash(path), filepath.ToSlash(destination)); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		status, err := app.status()
+		writeJSON(w, status, err)
+		return
+	}
 
 	resolvedParent, err := app.existingDirectory(parent)
 	if err != nil {
@@ -470,6 +543,15 @@ func (a App) handleDeletePath(w http.ResponseWriter, r *http.Request) {
 	}
 	if isGitPath(path) {
 		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
+	if app.sshName != "" {
+		if err := app.deleteRemotePath(filepath.ToSlash(path)); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		status, err := app.status()
+		writeJSON(w, status, err)
 		return
 	}
 

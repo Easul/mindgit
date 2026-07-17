@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -70,15 +68,57 @@ func (a App) isUntracked(path string) bool {
 }
 
 func (a App) addUntrackedStats(files []ChangedFile) {
+	if a.sshName != "" {
+		a.addRemoteUntrackedStats(files)
+		return
+	}
 	for i := range files {
 		if files[i].Status != "U" || files[i].Additions != 0 || files[i].Deletions != 0 {
 			continue
 		}
-		content, err := os.ReadFile(filepath.Join(a.root, files[i].Path))
+		content, err := a.readProjectFile(files[i].Path)
 		if err != nil {
 			continue
 		}
 		files[i].Additions = lineCount(content)
+	}
+}
+
+func (a App) addRemoteUntrackedStats(files []ChangedFile) {
+	indexes := make(map[string]int)
+	paths := make([]string, 0)
+	for index := range files {
+		if files[index].Status != "U" || files[index].Additions != 0 || files[index].Deletions != 0 {
+			continue
+		}
+		indexes[files[index].Path] = index
+		paths = append(paths, files[index].Path)
+	}
+	if len(paths) == 0 {
+		return
+	}
+	script := `for path do
+  [ -f "$path" ] || continue
+  count=$(awk 'END { print NR }' "$path" 2>/dev/null) || continue
+  printf '%s\t%s\n' "$count" "$path"
+done`
+	args := append([]string{"-c", script, "mindgit-lines"}, paths...)
+	output, err := a.run("sh", args...)
+	if err != nil {
+		return
+	}
+	for line := range strings.SplitSeq(strings.TrimRight(output, "\n"), "\n") {
+		countText, path, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		count, err := strconv.Atoi(countText)
+		if err != nil {
+			continue
+		}
+		if index, ok := indexes[path]; ok {
+			files[index].Additions = count
+		}
 	}
 }
 

@@ -31,13 +31,16 @@ type TerminalManager struct {
 }
 
 type TerminalSession struct {
-	id         string
-	title      string
-	projectKey string
-	project    string
-	root       string
-	master     *os.File
-	command    *exec.Cmd
+	id          string
+	title       string
+	projectKey  string
+	project     string
+	root        string
+	master      *os.File
+	command     *exec.Cmd
+	sshName     string
+	cleanup     func()
+	cleanupOnce sync.Once
 
 	mu          sync.Mutex
 	buffer      []byte
@@ -52,6 +55,7 @@ type TerminalSummary struct {
 	ProjectKey string `json:"projectKey"`
 	Project    string `json:"project"`
 	Closed     bool   `json:"closed"`
+	SSHName    string `json:"sshName,omitempty"`
 }
 
 type terminalClientMessage struct {
@@ -111,12 +115,22 @@ func (a App) handleTerminal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		app, appErr := a.appForRequest(r)
-		if appErr != nil {
-			http.Error(w, appErr.Error(), http.StatusBadRequest)
-			return
+		sshName := strings.TrimSpace(r.URL.Query().Get("ssh"))
+		if sshName != "" {
+			vaultKey, ok := a.auth.vaultKey(r)
+			if !ok {
+				http.Error(w, "SSH key vault is locked", http.StatusUnauthorized)
+				return
+			}
+			session, err = a.terminals.createSSH(a.ssh, sshName, vaultKey)
+		} else {
+			app, appErr := a.appForRequest(r)
+			if appErr != nil {
+				http.Error(w, appErr.Error(), http.StatusBadRequest)
+				return
+			}
+			session, err = a.terminals.create(app.currentProject())
 		}
-		session, err = a.terminals.create(app.currentProject())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -131,6 +145,43 @@ func (a App) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.serve(connection)
+}
+
+func (m *TerminalManager) createSSH(config SSHConfig, name string, vaultKey []byte) (*TerminalSession, error) {
+	connection, ok := sshConnectionByName(config, name)
+	if !ok {
+		return nil, fmt.Errorf("unknown SSH connection: %s", name)
+	}
+	command, cleanup, err := buildSSHTerminalCommand(config, connection, vaultKey)
+	if err != nil {
+		return nil, err
+	}
+	master, startedCommand, err := startPTYCommand(command)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+
+	m.mu.Lock()
+	m.next++
+	session := &TerminalSession{
+		id:          randomTerminalID(),
+		title:       fmt.Sprintf("SSH %s", connection.Name),
+		projectKey:  "ssh:" + connection.Name,
+		project:     connection.User + "@" + connection.Host,
+		root:        connection.RemoteDir,
+		master:      master,
+		command:     startedCommand,
+		sshName:     connection.Name,
+		cleanup:     cleanup,
+		connections: make(map[*webSocketConn]struct{}),
+	}
+	m.sessions[session.id] = session
+	m.mu.Unlock()
+
+	go session.readOutput()
+	go session.wait()
+	return session, nil
 }
 
 func (m *TerminalManager) create(project ProjectSummary) (*TerminalSession, error) {
@@ -182,6 +233,7 @@ func (m *TerminalManager) summaries() []TerminalSummary {
 			ProjectKey: session.projectKey,
 			Project:    session.project,
 			Closed:     session.closed,
+			SSHName:    session.sshName,
 		})
 		session.mu.Unlock()
 	}
@@ -313,6 +365,7 @@ func (s *TerminalSession) wait() {
 	for _, connection := range connections {
 		_ = connection.writeJSON(terminalServerMessage{Type: "exit", Message: message})
 	}
+	s.cleanupResources()
 }
 
 func (s *TerminalSession) close() {
@@ -320,6 +373,7 @@ func (s *TerminalSession) close() {
 	if s.closed {
 		s.mu.Unlock()
 		_ = s.master.Close()
+		s.cleanupResources()
 		return
 	}
 	s.closed = true
@@ -330,9 +384,18 @@ func (s *TerminalSession) close() {
 	s.mu.Unlock()
 	terminatePTY(s.command)
 	_ = s.master.Close()
+	s.cleanupResources()
 	for _, connection := range connections {
 		connection.close()
 	}
+}
+
+func (s *TerminalSession) cleanupResources() {
+	s.cleanupOnce.Do(func() {
+		if s.cleanup != nil {
+			s.cleanup()
+		}
+	})
 }
 
 func randomTerminalID() string {

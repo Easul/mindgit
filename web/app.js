@@ -27,6 +27,7 @@ const state = {
   initialProjectKey: initialParams.get('project') || '',
   projects: [],
   projectsByKey: new Map(),
+  sshConnections: [],
   currentProjectKey: '',
   workspace: { activeProjectKey: '', projects: {} },
   migratedLegacyWorkspace: false,
@@ -63,6 +64,117 @@ const workspaceStorageKey = 'mindgit-workspace-v2';
 const legacyWorkspaceStorageKey = 'mindgit-workspace-v1';
 let splitPaneResizeObserver = null;
 let projectSwitcherSyncFrame = 0;
+let runtimeStatsTimer = 0;
+
+async function ensureAuthenticated() {
+  const response = await fetch('/api/auth/status', { cache: 'no-store' });
+  const status = await response.json();
+  if (!response.ok) throw new Error(status.error || response.statusText);
+  if (!status.enabled || status.authenticated) return;
+
+  const dialog = $('login-dialog');
+  const form = $('login-form');
+  const password = $('login-password');
+  const error = $('login-error');
+  const submit = $('login-submit');
+  dialog.hidden = false;
+  requestAnimationFrame(() => password.focus());
+
+  await new Promise((resolve) => {
+    const unlock = async (event) => {
+      event.preventDefault();
+      error.textContent = '';
+      submit.disabled = true;
+      try {
+        const loginResponse = await fetch('/api/auth/login', {
+          method: 'POST',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: password.value }),
+        });
+        if (!loginResponse.ok) {
+          const message = (await loginResponse.text()).trim();
+          throw new Error(message || loginResponse.statusText);
+        }
+        form.removeEventListener('submit', unlock);
+        password.value = '';
+        dialog.hidden = true;
+        resolve();
+      } catch (loginError) {
+        error.textContent = loginError.message;
+        password.select();
+      } finally {
+        submit.disabled = false;
+      }
+    };
+    form.addEventListener('submit', unlock);
+  });
+}
+
+function formatRuntimeBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '-';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function formatRuntimeDuration(seconds) {
+  const total = Math.max(0, Number(seconds) || 0);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remaining = Math.floor(total % 60);
+  return hours ? `${hours}h ${minutes}m` : minutes ? `${minutes}m ${remaining}s` : `${remaining}s`;
+}
+
+function renderRuntimeStats(stats) {
+  const cards = [
+    ['CPU', stats.cpuAvailable ? `${stats.cpuPercent.toFixed(1)}%` : 'Unavailable'],
+    ['Memory', formatRuntimeBytes(stats.memoryBytes)],
+    ['Go Heap', formatRuntimeBytes(stats.heapBytes)],
+    ['Heap Objects', Number(stats.heapObjects).toLocaleString()],
+    ['Goroutines', Number(stats.goroutines).toLocaleString()],
+    ['GC Runs', Number(stats.gcCount).toLocaleString()],
+    ['Uptime', formatRuntimeDuration(stats.uptimeSeconds)],
+    ['Active Commands', Number(stats.activeCommands).toLocaleString()],
+    ['Commands', Number(stats.commands).toLocaleString()],
+    ['Failed Commands', Number(stats.failedCommands).toLocaleString()],
+    ['Average Command', `${Number(stats.averageCommandMs).toFixed(1)} ms`],
+    ['Terminals', Number(stats.terminalSessions).toLocaleString()],
+  ];
+  $('runtime-grid').innerHTML = cards.map(([label, value]) => `
+    <div class="runtime-card">
+      <div class="runtime-card-label">${escapeHTML(label)}</div>
+      <div class="runtime-card-value">${escapeHTML(value)}</div>
+    </div>`).join('');
+}
+
+async function refreshRuntimeStats() {
+  try {
+    const stats = await api('/api/runtime/stats', { includeProject: false });
+    $('runtime-error').textContent = '';
+    renderRuntimeStats(stats);
+  } catch (error) {
+    $('runtime-error').textContent = error.message;
+  }
+}
+
+function openRuntimeStats() {
+  $('runtime-dialog').hidden = false;
+  refreshRuntimeStats();
+  window.clearInterval(runtimeStatsTimer);
+  runtimeStatsTimer = window.setInterval(refreshRuntimeStats, 1500);
+}
+
+function closeRuntimeStats() {
+  $('runtime-dialog').hidden = true;
+  window.clearInterval(runtimeStatsTimer);
+  runtimeStatsTimer = 0;
+}
 
 function normalizeMode(mode) {
   return ['diff', 'full', 'edit'].includes(mode) ? mode : 'full';
@@ -410,6 +522,15 @@ async function loadProjects() {
   updateProjectSwitcher();
   if (!state.embed && state.currentProjectKey) {
     saveWorkspaceState();
+  }
+}
+
+async function loadSSHConnections() {
+  try {
+    const connections = await api('/api/ssh/connections', { includeProject: false });
+    state.sshConnections = Array.isArray(connections) ? connections : [];
+  } catch {
+    state.sshConnections = [];
   }
 }
 
@@ -1159,6 +1280,11 @@ syncLayoutState();
 if ($('worktree-view')) $('worktree-view').addEventListener('click', () => setView('worktree'));
 if ($('history-view')) $('history-view').addEventListener('click', () => setView('history'));
 if ($('theme-toggle')) $('theme-toggle').addEventListener('click', toggleTheme);
+if ($('runtime-stats')) $('runtime-stats').addEventListener('click', openRuntimeStats);
+if ($('runtime-close')) $('runtime-close').addEventListener('click', closeRuntimeStats);
+if ($('runtime-dialog')) $('runtime-dialog').addEventListener('click', (event) => {
+  if (event.target === $('runtime-dialog')) closeRuntimeStats();
+});
 if ($('refresh')) $('refresh').addEventListener('click', refreshWorkspaceOutline);
 if ($('project-switcher')) $('project-switcher').addEventListener('click', (event) => {
   event.stopPropagation();
@@ -1204,7 +1330,9 @@ if (systemThemeMediaQuery) {
 }
 
 async function bootstrap() {
+  await ensureAuthenticated();
   await loadProjects();
+  await loadSSHConnections();
   await refresh();
   if (state.embed) {
     const initialTabs = parseInitialTabs();
@@ -1220,4 +1348,4 @@ async function bootstrap() {
   requestAnimationFrame(syncViewerHeight);
 }
 
-bootstrap();
+bootstrap().catch((error) => setMessage(error.message, 'error'));

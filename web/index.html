@@ -75,6 +75,7 @@
         <div class="stat">Deleted: <strong id="deleted">0</strong></div>
         <div class="stat"><strong id="lines">+0 -0</strong></div>
         <button id="theme-toggle" type="button">Light</button>
+        <button id="runtime-stats" type="button">Runtime</button>
         <button id="refresh" type="button">Refresh</button>
         <div class="grow"></div>
         <form class="search" id="search-form">
@@ -155,6 +156,29 @@
         <span id="root">-</span>
         <span class="message" id="message"></span>
       </footer>
+    </div>
+
+    <div id="login-dialog" class="prompt-dialog-backdrop auth-dialog-backdrop" hidden>
+      <form id="login-form" class="prompt-dialog auth-dialog" autocomplete="off">
+        <h2 class="prompt-dialog-title">Unlock MindGit</h2>
+        <p class="prompt-dialog-message">Enter the access password configured for this MindGit instance.</p>
+        <input id="login-password" class="prompt-dialog-field" type="password" minlength="8" autocomplete="current-password" required />
+        <p id="login-error" class="dialog-error" role="alert"></p>
+        <div class="prompt-dialog-actions">
+          <button id="login-submit" class="primary" type="submit">Unlock</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="runtime-dialog" class="prompt-dialog-backdrop" hidden>
+      <div class="prompt-dialog runtime-dialog" role="dialog" aria-modal="true" aria-labelledby="runtime-dialog-title">
+        <div class="dialog-title-row">
+          <h2 id="runtime-dialog-title" class="prompt-dialog-title">MindGit Runtime</h2>
+          <button id="runtime-close" type="button" aria-label="Close runtime information">×</button>
+        </div>
+        <p id="runtime-error" class="dialog-error" role="alert"></p>
+        <div id="runtime-grid" class="runtime-grid"></div>
+      </div>
     </div>
 
     <script src="/utils.js"></script>

@@ -13,12 +13,20 @@ type App struct {
 	projectByKey   map[string]ProjectSummary
 	defaultProject string
 	terminals      *TerminalManager
+	monitor        *RuntimeMonitor
+	auth           *AuthManager
+	ssh            SSHConfig
+	sshName        string
+	vaultKey       []byte
+	cache          *ProjectCache
 }
 
 type ProjectSummary struct {
-	Key  string `json:"key"`
-	Name string `json:"name"`
-	Root string `json:"root"`
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	Root    string `json:"root"`
+	Remote  bool   `json:"remote,omitempty"`
+	SSHName string `json:"sshName,omitempty"`
 }
 
 type ProjectsResponse struct {
@@ -26,8 +34,8 @@ type ProjectsResponse struct {
 	DefaultProject string           `json:"defaultProject"`
 }
 
-func buildProjects(roots []string) []ProjectSummary {
-	projects := make([]ProjectSummary, 0, len(roots))
+func buildProjects(roots []string, ssh SSHConfig) []ProjectSummary {
+	projects := make([]ProjectSummary, 0, len(roots)+len(ssh.Connections))
 	for _, root := range roots {
 		name := filepath.Base(root)
 		if name == "." || name == string(filepath.Separator) || name == "" {
@@ -37,6 +45,18 @@ func buildProjects(roots []string) []ProjectSummary {
 			Key:  root,
 			Name: name,
 			Root: root,
+		})
+	}
+	for _, connection := range ssh.Connections {
+		if connection.TerminalOnly {
+			continue
+		}
+		projects = append(projects, ProjectSummary{
+			Key:     "ssh:" + connection.Name,
+			Name:    connection.Name,
+			Root:    connection.RemoteDir,
+			Remote:  true,
+			SSHName: connection.Name,
 		})
 	}
 	return projects
@@ -67,12 +87,26 @@ func (a App) appForRequest(r *http.Request) (App, error) {
 		return App{}, fmt.Errorf("unknown project: %s", key)
 	}
 
+	var vaultKey []byte
+	if project.Remote {
+		var unlocked bool
+		vaultKey, unlocked = a.auth.vaultKey(r)
+		if !unlocked {
+			return App{}, fmt.Errorf("SSH key vault is locked")
+		}
+	}
 	return App{
 		root:           project.Root,
 		projects:       a.projects,
 		projectByKey:   a.projectByKey,
 		defaultProject: project.Key,
 		terminals:      a.terminals,
+		monitor:        a.monitor,
+		auth:           a.auth,
+		ssh:            a.ssh,
+		sshName:        project.SSHName,
+		vaultKey:       vaultKey,
+		cache:          a.cache,
 	}, nil
 }
 
