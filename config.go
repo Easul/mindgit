@@ -58,14 +58,20 @@ type SSHConfig struct {
 }
 
 type SSHConnectionConfig struct {
-	Name         string   `json:"name"`
-	Host         string   `json:"host"`
-	Port         int      `json:"port,omitempty"`
-	User         string   `json:"user"`
-	RemoteDir    string   `json:"remoteDir"`
-	Key          string   `json:"key,omitempty"`
-	JumpHosts    []string `json:"jumpHosts,omitempty"`
-	TerminalOnly bool     `json:"terminalOnly,omitempty"`
+	Name         string          `json:"name"`
+	Host         string          `json:"host"`
+	Port         int             `json:"port,omitempty"`
+	User         string          `json:"user"`
+	RemoteDir    string          `json:"remoteDir,omitempty"`
+	Paths        []SSHPathConfig `json:"paths,omitempty"`
+	Key          string          `json:"key,omitempty"`
+	JumpHosts    []string        `json:"jumpHosts,omitempty"`
+	TerminalOnly bool            `json:"terminalOnly,omitempty"`
+}
+
+type SSHPathConfig struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
 }
 
 var version = "dev"
@@ -95,13 +101,13 @@ func defaultFileConfig() FileConfig {
 func defaultConfigPath() string {
 	executable, err := os.Executable()
 	if err != nil {
-		return "mindgit.json"
+		return "config.json"
 	}
 	resolved, err := filepath.EvalSymlinks(executable)
 	if err == nil {
 		executable = resolved
 	}
-	return filepath.Join(filepath.Dir(executable), "mindgit.json")
+	return filepath.Join(filepath.Dir(executable), "config.json")
 }
 
 func parseConfig(args []string) (Config, error) {
@@ -330,7 +336,7 @@ func resolveProjectPath(configPath, path string) (string, error) {
 func resolveSSHPaths(configPath string, config SSHConfig) SSHConfig {
 	base := filepath.Dir(configPath)
 	if strings.TrimSpace(config.DataDir) == "" {
-		config.DataDir = filepath.Join(base, "mindgit-data")
+		config.DataDir = filepath.Join(base, "data")
 	} else if !filepath.IsAbs(config.DataDir) {
 		config.DataDir = filepath.Join(base, config.DataDir)
 	}
@@ -338,6 +344,12 @@ func resolveSSHPaths(configPath string, config SSHConfig) SSHConfig {
 		config.KnownHosts = filepath.Join(config.DataDir, "known_hosts")
 	} else if !filepath.IsAbs(config.KnownHosts) {
 		config.KnownHosts = filepath.Join(base, config.KnownHosts)
+	}
+	for index := range config.Connections {
+		connection := &config.Connections[index]
+		if len(connection.Paths) == 0 && strings.TrimSpace(connection.RemoteDir) != "" {
+			connection.Paths = []SSHPathConfig{{Name: filepath.Base(connection.RemoteDir), Path: connection.RemoteDir}}
+		}
 	}
 	return config
 }

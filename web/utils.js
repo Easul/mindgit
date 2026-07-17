@@ -279,7 +279,7 @@ function showActionMenu(anchor, items) {
       item.danger ? 'danger' : '',
     ].filter(Boolean).join(' ');
     button.disabled = Boolean(item.disabled);
-    button.textContent = item.label;
+    button.textContent = window.t ? window.t(item.label) : item.label;
     button.addEventListener('click', async (event) => {
       event.stopPropagation();
       closeActionMenu();
@@ -335,17 +335,18 @@ function fileStatusClasses(file) {
 function describeFileStatus(file) {
   const base = fileStatusBaseCode(file) || file?.status || 'M';
   const labels = {
-    A: file?.staged ? '已暂存新增' : '新增',
-    D: file?.staged ? '已暂存删除' : '删除',
-    M: file?.staged ? '已暂存修改' : '修改',
-    U: '未跟踪',
-    I: '已忽略',
+    A: file?.staged ? 'Staged addition' : 'Added',
+    D: file?.staged ? 'Staged deletion' : 'Deleted',
+    M: file?.staged ? 'Staged modification' : 'Modified',
+    U: 'Untracked',
+    I: 'Ignored',
   };
 
   if (file?.staged && file?.unstaged) {
-    return `${labels[base] || '已暂存变更'}，且有未暂存修改`;
+    return `${window.t ? window.t(labels[base] || 'Staged change') : labels[base] || 'Staged change'}, ${window.t ? window.t('with unstaged changes') : 'with unstaged changes'}`;
   }
-  return labels[base] || '修改';
+  const label = labels[base] || 'Modified';
+  return window.t ? window.t(label) : label;
 }
 
 function escapeHTML(value) {

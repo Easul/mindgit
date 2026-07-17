@@ -35,7 +35,7 @@ func TestParseConfigVersion(t *testing.T) {
 
 func TestParseConfigLoadsFileAndAllowsCLIOverrides(t *testing.T) {
 	root := t.TempDir()
-	configPath := filepath.Join(t.TempDir(), "mindgit.json")
+	configPath := filepath.Join(t.TempDir(), "config.json")
 	passwordHash, err := hashPassword("correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +61,26 @@ func TestParseConfigLoadsFileAndAllowsCLIOverrides(t *testing.T) {
 	}
 	if len(config.roots) != 1 || config.roots[0] != root {
 		t.Fatalf("roots = %#v, want %q", config.roots, root)
+	}
+}
+
+func TestDefaultConfigAndDataNames(t *testing.T) {
+	if filepath.Base(defaultConfigPath()) != "config.json" {
+		t.Fatalf("default config = %q", defaultConfigPath())
+	}
+	resolved := resolveSSHPaths(filepath.Join(t.TempDir(), "config.json"), SSHConfig{})
+	if filepath.Base(resolved.DataDir) != "data" {
+		t.Fatalf("default data dir = %q", resolved.DataDir)
+	}
+}
+
+func TestResolveSSHPathsMigratesRemoteDir(t *testing.T) {
+	resolved := resolveSSHPaths(filepath.Join(t.TempDir(), "config.json"), SSHConfig{
+		Connections: []SSHConnectionConfig{{Name: "server", RemoteDir: "/srv/app"}},
+	})
+	paths := resolved.Connections[0].Paths
+	if len(paths) != 1 || paths[0].Name != "app" || paths[0].Path != "/srv/app" {
+		t.Fatalf("migrated paths = %#v", paths)
 	}
 }
 

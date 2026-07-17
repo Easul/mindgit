@@ -66,21 +66,22 @@
       <header>
         <div class="brand">MindGit</div>
         <div class="view-toggle">
-          <button id="worktree-view" class="active" type="button">Working Tree</button>
-          <button id="history-view" type="button">History</button>
+          <button id="worktree-view" class="header-icon-button active" type="button" title="Working Tree" aria-label="Working Tree">≋</button>
+          <button id="history-view" class="header-icon-button" type="button" title="History" aria-label="History">◷</button>
         </div>
         <div class="stat">Branch: <strong id="branch">-</strong></div>
         <div class="stat">Modified: <strong id="modified">0</strong></div>
         <div class="stat">Added: <strong id="added">0</strong></div>
         <div class="stat">Deleted: <strong id="deleted">0</strong></div>
         <div class="stat"><strong id="lines">+0 -0</strong></div>
-        <button id="theme-toggle" type="button">Light</button>
-        <button id="runtime-stats" type="button">Runtime</button>
-        <button id="refresh" type="button">Refresh</button>
+        <button id="theme-toggle" class="header-icon-button" type="button" title="Switch to light theme" aria-label="Switch to light theme">☀</button>
+        <button id="language-toggle" class="header-icon-button" type="button" title="Switch language" aria-label="Switch language">文</button>
+        <button id="runtime-stats" class="header-icon-button" type="button" title="Runtime" aria-label="Runtime">◉</button>
+        <button id="refresh" class="header-icon-button" type="button" title="Refresh" aria-label="Refresh">↻</button>
         <div class="grow"></div>
         <form class="search" id="search-form">
           <input id="search" placeholder="Search with keyword" autocomplete="off" />
-          <button type="submit">Search</button>
+          <button class="header-icon-button" type="submit" title="Search" aria-label="Search">⌕</button>
         </form>
       </header>
 
@@ -116,11 +117,11 @@
           <div class="review-body">
             <div class="card">
               <h3>File Review</h3>
-              <p id="review-summary">选择文件后，这里会显示变更摘要、风险提示和快速操作入口。</p>
+              <p id="review-summary">Select a file to view its change summary and quick actions.</p>
             </div>
             <div class="card">
               <h3>Search Results</h3>
-              <div class="search-results" id="search-results"><p>输入关键词后全局搜索。</p></div>
+              <div class="search-results" id="search-results"><p>Enter a keyword to search the project.</p></div>
             </div>
           </div>
         </div>
@@ -181,6 +182,7 @@
       </div>
     </div>
 
+    <script src="/i18n.js"></script>
     <script src="/utils.js"></script>
     <script src="/history.js"></script>
     <script src="/tree.js"></script>

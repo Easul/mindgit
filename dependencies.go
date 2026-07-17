@@ -44,13 +44,26 @@ func validateSSHConfig(config SSHConfig) error {
 		if _, exists := connections[name]; exists {
 			return fmt.Errorf("duplicate SSH connection name: %s", name)
 		}
-		if strings.TrimSpace(connection.Host) == "" || strings.TrimSpace(connection.User) == "" || strings.TrimSpace(connection.RemoteDir) == "" {
-			return fmt.Errorf("SSH connection %q requires host, user, and remoteDir", name)
+		if strings.TrimSpace(connection.Host) == "" || strings.TrimSpace(connection.User) == "" || len(connection.Paths) == 0 {
+			return fmt.Errorf("SSH connection %q requires host, user, and at least one path", name)
 		}
-		for field, value := range map[string]string{"name": connection.Name, "host": connection.Host, "user": connection.User, "remoteDir": connection.RemoteDir} {
+		for field, value := range map[string]string{"name": connection.Name, "host": connection.Host, "user": connection.User} {
 			if strings.ContainsAny(value, "\r\n\x00") {
 				return fmt.Errorf("SSH connection %q has an invalid %s", name, field)
 			}
+		}
+		pathNames := make(map[string]bool)
+		for _, remotePath := range connection.Paths {
+			if strings.TrimSpace(remotePath.Name) == "" || strings.TrimSpace(remotePath.Path) == "" {
+				return fmt.Errorf("SSH connection %q contains a path without name or path", name)
+			}
+			if strings.ContainsAny(remotePath.Name+remotePath.Path, "\r\n\x00") {
+				return fmt.Errorf("SSH connection %q contains an invalid path", name)
+			}
+			if pathNames[remotePath.Name] {
+				return fmt.Errorf("SSH connection %q has duplicate path name %q", name, remotePath.Name)
+			}
+			pathNames[remotePath.Name] = true
 		}
 		if connection.Key != "" && !validSSHKeyName(connection.Key) {
 			return fmt.Errorf("SSH connection %q has an invalid key name", name)

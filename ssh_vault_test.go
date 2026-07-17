@@ -41,9 +41,9 @@ func TestBuildSSHTerminalCommandUsesOnlyRequiredKeys(t *testing.T) {
 		DataDir:    dataDir,
 		KnownHosts: filepath.Join(dataDir, "known_hosts"),
 		Connections: []SSHConnectionConfig{
-			{Name: "bastion", Host: "jump.example.com", User: "jump", RemoteDir: "/tmp", Key: "jump"},
-			{Name: "production", Host: "10.0.0.20", User: "deploy", RemoteDir: "/srv/app with space", Key: "production", JumpHosts: []string{"bastion"}},
-			{Name: "unused", Host: "unused.example.com", User: "nobody", RemoteDir: "/tmp", Key: "missing"},
+			{Name: "bastion", Host: "jump.example.com", User: "jump", Paths: []SSHPathConfig{{Name: "root", Path: "/tmp"}}, Key: "jump"},
+			{Name: "production", Host: "10.0.0.20", User: "deploy", Paths: []SSHPathConfig{{Name: "root", Path: "/srv/app with space"}}, Key: "production", JumpHosts: []string{"bastion"}},
+			{Name: "unused", Host: "unused.example.com", User: "nobody", Paths: []SSHPathConfig{{Name: "root", Path: "/tmp"}}, Key: "missing"},
 		},
 	}
 	vaultKey := bytes.Repeat([]byte{9}, 32)

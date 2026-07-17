@@ -44,7 +44,7 @@ exec sh -c "$last"
 			DataDir:    dataDir,
 			KnownHosts: filepath.Join(dataDir, "known_hosts"),
 			Connections: []SSHConnectionConfig{{
-				Name: "remote", Host: "example.invalid", User: "tester", RemoteDir: root,
+				Name: "remote", Host: "example.invalid", User: "tester", Paths: []SSHPathConfig{{Name: "root", Path: root}},
 			}},
 		},
 		cache: NewProjectCache(),

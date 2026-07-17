@@ -468,6 +468,22 @@ function hideTerminalPanel() {
   delete document.documentElement.dataset.terminalOpen;
 }
 
+function toggleTerminalPanel() {
+  if (state.embed) return;
+  if ($('terminal-panel')?.hidden) {
+    openTerminalPanel();
+  } else {
+    hideTerminalPanel();
+  }
+}
+
+document.addEventListener('keydown', (event) => {
+  if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'j') return;
+  event.preventDefault();
+  event.stopPropagation();
+  toggleTerminalPanel();
+}, true);
+
 function initializeTerminalPanel() {
   if (terminalState.initialized) return;
   terminalState.initialized = true;

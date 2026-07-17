@@ -247,7 +247,7 @@ function closeTab(path) {
       syncLayoutState();
       $('viewer').innerHTML = '<div class="empty">No file selected</div>';
       if ($('review-summary')) {
-        $('review-summary').textContent = '选择文件后，这里会显示变更摘要、风险提示和快速操作入口。';
+        $('review-summary').textContent = 'Select a file to view its change summary and quick actions.';
       }
       renderFileTabs();
       saveWorkspaceState();
@@ -405,7 +405,7 @@ async function selectFile(path, options = {}) {
     renderSplitPane();
     $('viewer').innerHTML = '<div class="empty">No file selected</div>';
     if ($('review-summary')) {
-      $('review-summary').textContent = '选择文件后，这里会显示变更摘要、风险提示和快速操作入口。';
+      $('review-summary').textContent = 'Select a file to view its change summary and quick actions.';
     }
     saveWorkspaceState();
     notifyEmbedState();
@@ -1012,7 +1012,7 @@ async function deletePath(path, isDir) {
       } else {
         $('viewer').innerHTML = '<div class="empty">No file selected</div>';
         if ($('review-summary')) {
-          $('review-summary').textContent = '选择文件后，这里会显示变更摘要、风险提示和快速操作入口。';
+          $('review-summary').textContent = 'Select a file to view its change summary and quick actions.';
         }
       }
     }

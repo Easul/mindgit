@@ -33,7 +33,7 @@ function renderHistory() {
     ${state.selectedCommit ? renderCommitFiles() : ''}`;
   $('review-summary').textContent = state.selectedCommit?.subject
     ? `${state.selectedCommit.shortHash}: ${state.selectedCommit.subject}`
-    : '选择提交后，这里会显示提交摘要。';
+    : (window.t ? window.t('Select a commit to view its summary.') : 'Select a commit to view its summary.');
   if (!state.selectedCommitFile) {
     $('viewer').innerHTML = '<div class="empty">No file selected</div>';
   }

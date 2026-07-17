@@ -43,7 +43,7 @@ func buildProjects(roots []string, ssh SSHConfig) []ProjectSummary {
 		}
 		projects = append(projects, ProjectSummary{
 			Key:  root,
-			Name: name,
+			Name: "local / " + name,
 			Root: root,
 		})
 	}
@@ -51,13 +51,15 @@ func buildProjects(roots []string, ssh SSHConfig) []ProjectSummary {
 		if connection.TerminalOnly {
 			continue
 		}
-		projects = append(projects, ProjectSummary{
-			Key:     "ssh:" + connection.Name,
-			Name:    connection.Name,
-			Root:    connection.RemoteDir,
-			Remote:  true,
-			SSHName: connection.Name,
-		})
+		for _, remotePath := range connection.Paths {
+			projects = append(projects, ProjectSummary{
+				Key:     "ssh:" + connection.Name + ":" + remotePath.Name,
+				Name:    connection.Name + " / " + remotePath.Name,
+				Root:    remotePath.Path,
+				Remote:  true,
+				SSHName: connection.Name,
+			})
+		}
 	}
 	return projects
 }

@@ -776,7 +776,13 @@ function applyTheme(theme, options = {}) {
   if (options.persist !== false) {
     localStorage.setItem('mindgit-theme', theme);
   }
-  $('theme-toggle').textContent = theme === 'dark' ? 'Light' : 'Dark';
+  const themeToggle = $('theme-toggle');
+  if (themeToggle) {
+    const label = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+    themeToggle.textContent = theme === 'dark' ? '☀' : '☾';
+    themeToggle.title = window.t ? window.t(label) : label;
+    themeToggle.setAttribute('aria-label', themeToggle.title);
+  }
   const darkStyle = $('hljs-dark');
   const lightStyle = $('hljs-light');
   if (theme === 'dark') {

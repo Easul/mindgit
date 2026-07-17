@@ -11,13 +11,13 @@ import (
 )
 
 type SSHConnectionSummary struct {
-	Name       string   `json:"name"`
-	Host       string   `json:"host"`
-	Port       int      `json:"port"`
-	User       string   `json:"user"`
-	RemoteDir  string   `json:"remoteDir"`
-	JumpHosts  []string `json:"jumpHosts,omitempty"`
-	Configured bool     `json:"configured"`
+	Name       string          `json:"name"`
+	Host       string          `json:"host"`
+	Port       int             `json:"port"`
+	User       string          `json:"user"`
+	Paths      []SSHPathConfig `json:"paths"`
+	JumpHosts  []string        `json:"jumpHosts,omitempty"`
+	Configured bool            `json:"configured"`
 }
 
 func sshConnectionByName(config SSHConfig, name string) (SSHConnectionConfig, bool) {
@@ -38,7 +38,7 @@ func (a App) handleSSHConnections(w http.ResponseWriter, r *http.Request) {
 			Host:       connection.Host,
 			Port:       normalizedSSHPort(connection.Port),
 			User:       connection.User,
-			RemoteDir:  connection.RemoteDir,
+			Paths:      append([]SSHPathConfig(nil), connection.Paths...),
 			JumpHosts:  append([]string(nil), connection.JumpHosts...),
 			Configured: configured,
 		})
@@ -158,10 +158,17 @@ func buildSSHTerminalCommand(config SSHConfig, target SSHConnectionConfig, vault
 		cleanup()
 		return nil, nil, fmt.Errorf("unknown SSH connection: %s", target.Name)
 	}
-	remoteCommand := "cd -- " + shellQuote(target.RemoteDir) + " && exec \"${SHELL:-/bin/sh}\" -l"
+	remoteCommand := "cd -- " + shellQuote(defaultSSHPath(target)) + " && exec \"${SHELL:-/bin/sh}\" -l"
 	command := exec.Command("ssh", "-F", configPath, "-tt", alias, remoteCommand)
 	command.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	return command, cleanup, nil
+}
+
+func defaultSSHPath(connection SSHConnectionConfig) string {
+	if len(connection.Paths) > 0 {
+		return connection.Paths[0].Path
+	}
+	return connection.RemoteDir
 }
 
 func buildSSHExecCommand(config SSHConfig, target SSHConnectionConfig, vaultKey []byte, directory, name string, args ...string) (*exec.Cmd, func(), error) {
