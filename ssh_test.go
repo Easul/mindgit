@@ -1,7 +1,9 @@
 package main
 
 import (
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +27,23 @@ func TestSSHArgumentsWithJumpHosts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(arguments, want) {
 		t.Fatalf("arguments = %#v, want %#v", arguments, want)
+	}
+}
+
+func TestSSHControlPathSupportsIPv6Hosts(t *testing.T) {
+	config := SSHConfig{DataDir: t.TempDir()}
+	connection := SSHConnectionConfig{Name: "ipv6", Host: "git.example.com", User: "deploy", Port: 22}
+	path := sshControlPath(config, connection)
+	if filepath.Dir(path) != filepath.Join(config.DataDir, "control") {
+		t.Fatalf("control path = %q", path)
+	}
+	if strings.Contains(filepath.Base(path), ":") || len(filepath.Base(path)) != 24 {
+		t.Fatalf("unsafe control socket name: %q", filepath.Base(path))
+	}
+	connection.Host = "2001:db8::10"
+	ipv6Path := sshControlPath(config, connection)
+	if strings.Contains(filepath.Base(ipv6Path), ":") || ipv6Path == path {
+		t.Fatalf("IPv6 control path = %q", ipv6Path)
 	}
 }
 

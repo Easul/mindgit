@@ -481,6 +481,13 @@ document.addEventListener('keydown', (event) => {
   if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'j') return;
   event.preventDefault();
   event.stopPropagation();
+  const target = event.target instanceof Element ? event.target : null;
+  const terminalInput = target?.closest('.xterm-helper-textarea')
+    || (document.activeElement?.classList.contains('xterm-helper-textarea') ? document.activeElement : null);
+  if (terminalInput) {
+    sendTerminalInput(terminalState.clients.get(terminalState.activeId), '\n');
+    return;
+  }
   toggleTerminalPanel();
 }, true);
 

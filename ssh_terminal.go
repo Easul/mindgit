@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -121,7 +123,7 @@ func buildSSHTerminalCommand(config SSHConfig, target SSHConnectionConfig, vault
 		builder.WriteString("  UserKnownHostsFile " + sshConfigValue(config.KnownHosts) + "\n")
 		builder.WriteString("  ControlMaster auto\n")
 		builder.WriteString("  ControlPersist 600\n")
-		builder.WriteString("  ControlPath " + sshConfigValue(filepath.Join(controlDir, "%C")) + "\n")
+		builder.WriteString("  ControlPath " + sshConfigValue(sshControlPath(config, connection)) + "\n")
 		if connection.Key != "" {
 			keyPath := writtenKeys[connection.Key]
 			if keyPath == "" {
@@ -162,6 +164,24 @@ func buildSSHTerminalCommand(config SSHConfig, target SSHConnectionConfig, vault
 	command := exec.Command("ssh", "-F", configPath, "-tt", alias, remoteCommand)
 	command.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	return command, cleanup, nil
+}
+
+func sshControlPath(config SSHConfig, connection SSHConnectionConfig) string {
+	identity := connection.Name + "\x00" + connection.User + "\x00" + connection.Host + "\x00" + strconv.Itoa(normalizedSSHPort(connection.Port))
+	digest := sha256.Sum256([]byte(identity))
+	return filepath.Join(config.DataDir, "control", hex.EncodeToString(digest[:12]))
+}
+
+func clearSSHControlSockets(config SSHConfig, target SSHConnectionConfig) {
+	required, err := requiredSSHConnections(config, target.Name)
+	if err != nil {
+		return
+	}
+	for _, connection := range config.Connections {
+		if required[connection.Name] {
+			_ = os.Remove(sshControlPath(config, connection))
+		}
+	}
 }
 
 func defaultSSHPath(connection SSHConnectionConfig) string {
