@@ -453,4 +453,9 @@ window.addEventListener('blur', () => {
   pendingBareAltKey = false;
 });
 window.addEventListener('resize', closeActionMenu);
-window.addEventListener('scroll', closeActionMenu, true);
+window.addEventListener('scroll', (event) => {
+  if (activeActionMenu && (event.target === activeActionMenu || activeActionMenu.contains(event.target))) {
+    return;
+  }
+  closeActionMenu();
+}, true);

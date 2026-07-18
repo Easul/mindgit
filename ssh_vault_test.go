@@ -105,6 +105,19 @@ func TestBuildSSHExecCommandCanForceRawPTY(t *testing.T) {
 	if !strings.HasPrefix(remote, "stty raw -echo 2>/dev/null || exit 126; ") {
 		t.Fatalf("remote command does not enable raw PTY: %q", remote)
 	}
+	configContent, err := os.ReadFile(command.Args[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(configContent), "RequestTTY force") {
+		t.Fatalf("SSH config does not force PTY: %s", configContent)
+	}
+	if !strings.Contains(string(configContent), "ControlMaster no") || !strings.Contains(string(configContent), "ControlPath none") {
+		t.Fatalf("forced PTY SSH config still enables multiplexing: %s", configContent)
+	}
+	if strings.Contains(string(configContent), "ControlPersist") {
+		t.Fatalf("forced PTY SSH config contains ControlPersist: %s", configContent)
+	}
 	if !strings.Contains(remote, "cd -- '/srv/app' && exec 'printf' 'hello'") {
 		t.Fatalf("remote command = %q", remote)
 	}

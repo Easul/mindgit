@@ -37,6 +37,11 @@ func runApplication(args []string) error {
 	for _, dependency := range dependencies.Optional {
 		log.Printf("Optional command not found: %s", dependency)
 	}
+	for _, connection := range config.ssh.Connections {
+		if connection.ForcePTY {
+			log.Printf("SSH connection %q uses forced PTY compatibility", connection.Name)
+		}
+	}
 	projects := buildProjects(config.roots, config.ssh)
 	var monitor *RuntimeMonitor
 	if config.monitoring.Enabled {

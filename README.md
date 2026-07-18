@@ -1,102 +1,157 @@
 # MindGit
 
-MindGit is a local code review workbench for checking AI-generated code changes before committing them.
+**English** | [简体中文](README.zh-CN.md)
 
-It opens directly on uncommitted Git changes and combines a source-control style file list, diff viewer, single-file quick edit mode, and `rg` search in one browser UI.
+MindGit is a lightweight, single-binary browser workbench for reviewing Git changes, editing project files, searching code, browsing history, and working with local or SSH-hosted projects.
 
-## Features
+It is designed for quickly checking AI-generated or manually written changes before committing them, without requiring a desktop Git client or a large server stack.
 
-- Shows uncommitted Git changes by default
-- Groups changed files by directory with collapsible sections
-- Displays per-file diffs with additions and deletions
-- Supports quick single-file editing and save-back to disk
-- Supports editor tabs with per-tab draft retention and UI state restore
-- Supports split-pane review, history view, and per-file mode switching
-- Includes built-in find/replace, go-to-line, and multi-cursor block editing
-- Refreshes Git status and diff after saving
-- Includes `rg`-powered search
-- Supports dark and light themes with local persistence
-- Supports configurable project directory, bind address, and port
-- Supports a JSON configuration file with command-line overrides
-- Protects project APIs and terminal sessions with password authentication
-- Shows MindGit CPU, memory, Go runtime, command, and terminal statistics
-- Copies relative and absolute paths from file, folder, and project-root menus
-- Opens configured SSH sessions in the built-in terminal, including jump hosts
-- Switches the browser interface between Chinese and English
-- Toggles the integrated terminal with `Ctrl+J`
-- Includes a global, multi-tab xterm.js terminal panel with persistent server-side sessions on Linux
+## Highlights
 
-## User guide
+- Opens on the current Git working tree and groups changes by directory
+- Shows per-file diffs, additions, deletions, staged, unstaged, and untracked states
+- Supports full-file viewing and quick editing with draft retention
+- Includes tabs, split panes, history browsing, find/replace, go-to-line, and multi-cursor block editing
+- Searches with `rg` when available and falls back to Git-based search where possible
+- Copies relative and absolute paths from project, file, and folder menus
+- Supports multiple local projects and multiple named paths per SSH server
+- Supports SSH jump hosts and ordered multi-hop `ProxyJump` chains
+- Stores imported SSH private keys encrypted outside the main configuration file
+- Provides a built-in multi-tab terminal on Linux
+- Protects APIs and terminals with password authentication
+- Shows MindGit CPU, memory, Goroutine, command, and terminal statistics
+- Supports Chinese and English browser interfaces
+- Uses the Go standard library and embedded static assets to preserve the single-binary model
 
-For the current browser features, editor behavior, and built-in keyboard shortcuts, see:
+## Platform requirements
 
-- [docs/editor-guide.md](docs/editor-guide.md)
-- [docs/termux.md](docs/termux.md) for Android arm64 installation and builds
+Required:
 
-## Install from source
-
-Requirements:
-
-- Go 1.26+
+- Go 1.26 or newer when building from source
 - Git
-- ripgrep (`rg`) for faster search (optional)
-- OpenSSH client tools when SSH connections are configured
 
-Create a configuration and set its access password:
+Conditionally required:
+
+- OpenSSH client command `ssh` when SSH connections are configured
+
+Optional:
+
+- ripgrep (`rg`) for faster project search
+
+MindGit checks required commands at startup and exits with a clear error if a required command is missing. Missing optional commands are reported as warnings.
+
+The integrated terminal is available in Linux builds. See [docs/termux.md](docs/termux.md) for Android/Termux notes.
+
+## Quick start from source
+
+Create the default configuration:
 
 ```bash
 go run . --init-config --config ./config.json
+```
+
+Set the MindGit access password:
+
+```bash
 go run . --set-password --config ./config.json
 ```
 
-Run from this repository:
+Start MindGit:
 
 ```bash
 go run . --config ./config.json
 ```
 
-Then open:
+Open:
 
 ```text
 http://127.0.0.1:8787
 ```
 
-## Command line
+The default configuration and data directory names are:
+
+```text
+config.json
+data/
+```
+
+When `--config` is omitted, MindGit looks for `config.json` beside the executable, not necessarily in the current working directory.
+
+## Build
+
+Build a local binary:
 
 ```bash
+go build -trimpath -ldflags="-s -w" -o mindgit .
+```
+
+Run it:
+
+```bash
+./mindgit --config ./config.json
+```
+
+Build stripped Linux, macOS, Windows, and Android/Termux release artifacts:
+
+```bash
+scripts/build.sh
+```
+
+Release builds gzip embedded browser assets and preserve the single-binary deployment model. Generated artifacts are written to `dist/`.
+
+## Command-line reference
+
+```text
 mindgit [options]
 mindgit help
 mindgit version
 ```
 
-Options:
+| Short | Long | Value | Description |
+| --- | --- | --- | --- |
+| `-d` | `--dir` | path | Add a local project directory. Repeat for multiple projects. |
+| `-c` | `--config` | path | Use a JSON configuration file. Default: `config.json` beside the executable. |
+| `-b` | `--bind` | address | Override the configured bind address. Default: `127.0.0.1`. |
+| `-p` | `--port` | number | Override the configured HTTP port. Default: `8787`. |
+| `-i` | `--init-config` | none | Create a new configuration file. Fails if the file already exists. |
+| `-P` | `--set-password` | none | Set or replace the MindGit access password. |
+| `-I` | `--import-ssh-key` | path | Import and encrypt an SSH private key. |
+| `-n` | `--key-name` | name | Name used to store and reference an imported SSH key. |
+| `-v` | `--version` | none | Print the embedded build version. |
+| `-h` | `--help` | none | Show command-line help. |
 
-```text
--d, --dir <path>      Project directory to inspect. Default: current directory
--c, --config <path>   JSON configuration file. Default: beside the executable
--b, --bind <addr>     Bind address: 127.0.0.1 or 0.0.0.0. Default: 127.0.0.1
--p, --port <port>     HTTP port. Default: 8787
--i, --init-config     Create a configuration file
--P, --set-password   Set or replace the access password
--I, --import-ssh-key Import and encrypt an SSH private key
--n, --key-name       Name used by SSH connection key fields
--v, --version         Show version
--h, --help            Show help
-```
-
-Example:
+Short and long forms are equivalent:
 
 ```bash
-mindgit --dir /path/to/project --bind 0.0.0.0 --port 8787
+mindgit -c ./config.json -d /srv/project -b 127.0.0.1 -p 8787
+mindgit --config ./config.json --dir /srv/project --bind 127.0.0.1 --port 8787
 ```
 
-Command-line project, bind, and port values override the configuration file.
+Add multiple command-line projects by repeating `--dir`:
 
-## Configuration
+```bash
+mindgit \
+  --config ./config.json \
+  --dir /workspace/project-one \
+  --dir /workspace/project-two
+```
 
-MindGit keeps service, authentication, local project, monitoring, and SSH
-connection metadata in one JSON file. Encrypted private keys are stored
-separately under `ssh.dataDir`; they are never embedded in the main config.
+When at least one `--dir` is provided, command-line project directories replace the `projects` list from the configuration file for that run. `--bind` and `--port` also override their configured values.
+
+Administrative commands perform their action and exit:
+
+```bash
+mindgit --init-config --config ./config.json
+mindgit --set-password --config ./config.json
+mindgit --import-ssh-key ~/.ssh/id_ed25519 --key-name production --config ./config.json
+mindgit --version
+```
+
+## Configuration file
+
+MindGit keeps server, authentication, monitoring, local project, and SSH connection metadata in one JSON file. Imported private keys are stored separately under `ssh.dataDir` and are never written into `config.json`.
+
+Complete example:
 
 ```json
 {
@@ -118,7 +173,11 @@ separately under `ssh.dataDir`; they are never embedded in the main config.
   "projects": [
     {
       "name": "mindgit",
-      "path": "/path/to/mindgit"
+      "path": "/workspace/mindgit"
+    },
+    {
+      "name": "service-api",
+      "path": "/workspace/service-api"
     }
   ],
   "ssh": {
@@ -142,7 +201,7 @@ separately under `ssh.dataDir`; they are never embedded in the main config.
       },
       {
         "name": "production",
-        "host": "10.0.0.20",
+        "host": "server.example.com",
         "port": 22,
         "user": "deploy",
         "paths": [
@@ -164,104 +223,266 @@ separately under `ssh.dataDir`; they are never embedded in the main config.
 }
 ```
 
-`commandTimeoutSeconds` limits non-interactive Git, search, file, and SSH
-commands so disconnected requests or unresponsive servers do not leave work
-running indefinitely. `maxUploadMB` applies to both local and SSH uploads and
-also bounds editor save requests.
+Unknown configuration fields are rejected at startup to catch spelling mistakes.
 
-Import each private key after setting the MindGit password:
+### Server settings
 
-```bash
-mindgit --config ./config.json --import-ssh-key ~/.ssh/bastion_ed25519 --key-name bastion
-mindgit --config ./config.json --import-ssh-key ~/.ssh/production_ed25519 --key-name production
-```
+| Field | Default | Description |
+| --- | --- | --- |
+| `bind` | `127.0.0.1` | Address used by the HTTP server. Use `0.0.0.0` or `::` only when remote access is required. |
+| `port` | `8787` | HTTP listening port. |
+| `commandTimeoutSeconds` | `120` | Timeout for non-interactive Git, search, local file helper, and SSH commands. Valid range: 1–3600. |
+| `maxUploadMB` | `64` | Maximum upload and editor-save content size. Valid range: 1–10240. |
 
-The imported files are AES-GCM encrypted under
-`data/keys/<name>.key.enc`. The encryption key is derived from the
-MindGit password and is kept only in authenticated server-session memory.
-Plaintext `0600` key files exist only in a private temporary directory while an
-SSH terminal session is running and are removed when it exits. If the source
-private key also has an OpenSSH passphrase, OpenSSH prompts for it in the web
-terminal.
+The command timeout does not terminate interactive terminal sessions. It protects browser API requests from commands or SSH servers that stop responding.
 
-`jumpHosts` supports ordered multi-hop chains and is passed to OpenSSH with
-`ProxyJump`. Open the project-root menu and select `SSH: <name>` to start the
-remote shell in the first configured path. MindGit keeps a separate `known_hosts` file, accepts
-previously unseen host keys on first connection, and rejects changed host keys.
-Connection names, key names, jump references, and jump cycles are validated at
-startup.
+### Authentication settings
 
-SSH connections are also shown in the project switcher unless
-`terminalOnly` is `true`. Remote projects use the same status, file tree, diff,
-history, text viewing, editing, create, rename, and delete surfaces as local
-projects. `terminalOnly` is useful for bastion hosts that should only be used as
-jump hosts or command-line sessions.
+| Field | Description |
+| --- | --- |
+| `enabled` | Enables password authentication. New configurations enable it by default. |
+| `passwordHash` | Generated by `--set-password`. Do not create or edit it manually. |
+| `sessionHours` | Browser session lifetime in hours. Values less than or equal to zero fall back to 12 hours. |
 
-Set `forcePTY` to `true` only for SSH servers where ordinary non-interactive
-commands hang but `ssh -tt host command` succeeds. MindGit switches the forced
-terminal to raw/no-echo mode before running file and Git commands to avoid the
-usual terminal line-ending conversion.
-
-Each SSH connection can expose multiple named paths. Project names are displayed
-as `local / <folder>` for local directories and `<ssh-name> / <path-name>` for
-remote directories. The legacy single `remoteDir` field is still accepted and
-is converted into one named path at startup.
-
-Keep the config file and data directory readable only by the account running
-MindGit. Changing the MindGit password is blocked while imported keys exist;
-remove and re-import them first. When binding beyond localhost, put MindGit
-behind a trusted HTTPS reverse proxy because the password alone does not encrypt
-HTTP traffic.
-
-Print the embedded build version:
+Set the password interactively:
 
 ```bash
-mindgit -v
+mindgit --set-password --config ./config.json
 ```
 
-## Build
+Changing the MindGit password is blocked while encrypted SSH keys exist because the password derives the SSH vault encryption key. Remove the encrypted key files, change the password, and import the keys again if a password rotation is required.
 
-Build stripped Linux, macOS, and Windows amd64 artifacts, plus an Android arm64
-binary for Termux:
+### Local projects
+
+Each project entry contains:
+
+```json
+{
+  "name": "service-api",
+  "path": "/workspace/service-api"
+}
+```
+
+Relative project paths are resolved relative to the configuration file. Duplicate resolved paths are ignored. Local project labels currently use `local / <directory-name>` in the browser.
+
+If neither `projects` nor `--dir` supplies a project, MindGit uses the current working directory.
+
+### Monitoring
+
+```json
+"monitoring": {
+  "enabled": true
+}
+```
+
+When enabled, the runtime dialog reports MindGit's own CPU usage, memory usage, Goroutines, executed commands, command latency, errors, and terminal count.
+
+## SSH projects
+
+Top-level SSH settings:
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `dataDir` | `data` | Directory containing encrypted keys, control sockets, and other SSH runtime data. |
+| `knownHosts` | `<dataDir>/known_hosts` | Dedicated OpenSSH host-key database. |
+| `vaultSalt` | generated | Generated by `--set-password` and used to derive the SSH vault key. Do not edit it manually. |
+| `connections` | empty list | Configured SSH servers, jump hosts, and remote project paths. |
+
+Relative `dataDir` and `knownHosts` paths are resolved relative to `config.json`.
+
+An SSH connection may provide one or more named paths:
+
+```json
+{
+  "name": "production",
+  "host": "server.example.com",
+  "port": 22,
+  "user": "deploy",
+  "paths": [
+    {"name": "application", "path": "/srv/application"},
+    {"name": "logs", "path": "/var/log/application"}
+  ],
+  "key": "production"
+}
+```
+
+The browser project switcher displays these as:
+
+```text
+production / application
+production / logs
+```
+
+### SSH connection fields
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `name` | yes | Unique connection name. Also used by `jumpHosts` and project labels. |
+| `host` | yes | DNS name, IPv4 address, or IPv6 address. |
+| `port` | no | SSH port. Defaults to 22. |
+| `user` | yes | Remote SSH user. |
+| `paths` | yes | Named remote directories exposed as projects. Absolute remote paths are recommended. |
+| `key` | no | Imported key name, not a filesystem path. |
+| `jumpHosts` | no | Ordered list of other configured SSH connection names used with `ProxyJump`. |
+| `terminalOnly` | no | When true, hides the connection's paths from the project switcher while keeping it available as a jump host or terminal target. |
+| `forcePTY` | no | Compatibility mode for servers where non-PTY commands hang but `ssh -tt host command` works. |
+| `remoteDir` | legacy | Older single-path field. It is converted to one `paths` entry at startup. Prefer `paths`. |
+
+MindGit generates a private temporary OpenSSH configuration and does not depend on host aliases or options from `~/.ssh/config`. Configure the real `host`, `port`, `user`, imported `key`, and `jumpHosts` explicitly in `config.json`.
+
+MindGit uses a dedicated `known_hosts` file, accepts previously unseen host keys on the first connection, and rejects changed host keys.
+
+Normal SSH connections and jump hosts use OpenSSH connection reuse. A `forcePTY` target uses `RequestTTY force` and disables `ControlMaster` for that target because some PTY-only servers break reused non-interactive sessions.
+
+## Importing SSH private keys
+
+The `key` field in an SSH connection refers to an imported key name:
+
+```json
+"key": "production"
+```
+
+It does **not** refer directly to `~/.ssh/id_ed25519` or another source path.
+
+### 1. Set the MindGit password first
 
 ```bash
-scripts/build.sh
+mindgit --set-password --config ./config.json
 ```
 
-Release builds embed pre-compressed web assets while remaining standalone
-single-file executables. The Android artifact is `dist/mindgit-android-arm64`.
+This creates both `auth.passwordHash` and `ssh.vaultSalt`.
 
-The Android binary targets 64-bit Termux installations. Copy it into Termux's
-private storage rather than running it directly from shared storage:
+### 2. Import the private key
 
 ```bash
-pkg install git ripgrep
-mkdir -p ~/bin
-cp ~/storage/downloads/mindgit-android-arm64 ~/bin/mindgit
-chmod +x ~/bin/mindgit
-~/bin/mindgit --dir ~/projects/example
+mindgit \
+  --config ./config.json \
+  --import-ssh-key ~/.ssh/id_ed25519 \
+  --key-name production
 ```
 
-Then open `http://127.0.0.1:8787` in the Android browser. See the
-[Termux guide](docs/termux.md) for source builds, network access, checksums, and
-platform limitations.
-
-## Release
-
-Releases are created by pushing a tag that starts with `v`:
+Short form:
 
 ```bash
-git tag v0.0.2
-git push origin v0.0.2
+mindgit -c ./config.json -I ~/.ssh/id_ed25519 -n production
 ```
 
-The release workflow builds stripped Linux, macOS, and Windows amd64 artifacts
-and an Android arm64 artifact for Termux, packages them, writes checksums, and
-uploads the assets to a GitHub Release.
+MindGit prompts for the MindGit access password, verifies it, encrypts the private key with AES-GCM, and writes:
 
-## Development checks
+```text
+data/keys/production.key.enc
+```
+
+The original private key is not modified or deleted.
+
+Valid key names contain only letters, numbers, `.`, `-`, and `_`, with a maximum length of 80 characters. The source file must look like a private key and must be no larger than 1 MB.
+
+### Import multiple keys
 
 ```bash
-gofmt -w main.go
-go test ./...
+mindgit -c ./config.json -I ~/.ssh/bastion_ed25519 -n bastion
+mindgit -c ./config.json -I ~/.ssh/production_ed25519 -n production
 ```
+
+Then reference them independently:
+
+```json
+{
+  "name": "bastion",
+  "key": "bastion"
+}
+```
+
+```json
+{
+  "name": "production",
+  "key": "production",
+  "jumpHosts": ["bastion"]
+}
+```
+
+### Non-interactive import
+
+For controlled automation, MindGit can read the access password from `MINDGIT_PASSWORD`:
+
+```bash
+export MINDGIT_PASSWORD='your MindGit password'
+mindgit -c ./config.json -I ~/.ssh/id_ed25519 -n production
+unset MINDGIT_PASSWORD
+```
+
+Avoid storing the password in shell history, scripts, CI logs, or world-readable environment files.
+
+### Passphrase-protected OpenSSH keys
+
+MindGit encrypts the imported key file at rest regardless of whether the OpenSSH key itself has a passphrase. A passphrase-protected key can prompt inside an interactive SSH terminal, but background project operations cannot reliably answer an OpenSSH passphrase prompt. For full remote file and Git functionality, use an automation-appropriate key or an SSH setup that does not require an interactive passphrase prompt.
+
+### Key storage and temporary files
+
+- Encrypted keys are stored under `<ssh.dataDir>/keys/` with mode `0600`.
+- The data and key directories are created with restrictive permissions.
+- A decrypted temporary key is created only while an SSH command or terminal needs it.
+- Temporary key files and generated SSH configuration files are removed afterward.
+- The decryption key is derived from the authenticated MindGit password and kept only in authenticated server-session memory.
+
+## Jump hosts
+
+Configure each jump host as a normal SSH connection, then reference its connection name:
+
+```json
+{
+  "name": "production",
+  "host": "10.0.0.20",
+  "port": 22,
+  "user": "deploy",
+  "paths": [{"name": "app", "path": "/srv/app"}],
+  "key": "production",
+  "jumpHosts": ["bastion"]
+}
+```
+
+Multi-hop chains are ordered:
+
+```json
+"jumpHosts": ["edge", "bastion"]
+```
+
+Every referenced jump host must exist. Self-references, missing hosts, duplicate names, and jump cycles are rejected at startup.
+
+## Browser usage
+
+- Use the project switcher to move between local and SSH projects.
+- Use the tree root, file, folder, and Changes menus for actions and path copying.
+- Long project and action menus scroll when they do not fit in the viewport.
+- Use `Ctrl+J` outside the terminal input to show or hide the terminal panel.
+- Use `Ctrl+J` inside the terminal input to send a line feed instead of hiding the panel.
+- Use the language action in the header to switch between Chinese and English.
+- Use the runtime action to inspect MindGit's own resource usage.
+
+For editor behavior and shortcuts, see [docs/editor-guide.md](docs/editor-guide.md).
+
+## Security notes
+
+- Keep `config.json` and `data/` readable only by the account running MindGit.
+- Bind to `127.0.0.1` unless network access is intentionally required.
+- When exposing MindGit beyond localhost, place it behind a trusted HTTPS reverse proxy.
+- The MindGit password protects application access but does not encrypt plain HTTP traffic.
+- Review the dedicated `known_hosts` file before accepting unexpected host-key changes.
+- Use separate, least-privilege SSH keys and users where possible.
+- Upload and editor-save sizes are bounded by `server.maxUploadMB`.
+- Non-interactive commands are canceled when requests disconnect and are bounded by `server.commandTimeoutSeconds`.
+
+## Version and release workflow
+
+Print the embedded version:
+
+```bash
+mindgit --version
+```
+
+GitHub releases are driven by `.github/workflows/release.yml` and tags matching `v*`.
+
+## Additional documentation
+
+- [Editor and keyboard guide](docs/editor-guide.md)
+- [Android/Termux guide](docs/termux.md)

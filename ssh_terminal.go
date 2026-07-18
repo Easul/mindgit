@@ -20,6 +20,7 @@ type SSHConnectionSummary struct {
 	User       string          `json:"user"`
 	Paths      []SSHPathConfig `json:"paths"`
 	JumpHosts  []string        `json:"jumpHosts,omitempty"`
+	ForcePTY   bool            `json:"forcePTY,omitempty"`
 	Configured bool            `json:"configured"`
 }
 
@@ -43,6 +44,7 @@ func (a App) handleSSHConnections(w http.ResponseWriter, r *http.Request) {
 			User:       connection.User,
 			Paths:      append([]SSHPathConfig(nil), connection.Paths...),
 			JumpHosts:  append([]string(nil), connection.JumpHosts...),
+			ForcePTY:   connection.ForcePTY,
 			Configured: configured,
 		})
 	}
@@ -122,9 +124,15 @@ func buildSSHTerminalCommand(config SSHConfig, target SSHConnectionConfig, vault
 		builder.WriteString("  IdentitiesOnly yes\n")
 		builder.WriteString("  StrictHostKeyChecking accept-new\n")
 		builder.WriteString("  UserKnownHostsFile " + sshConfigValue(config.KnownHosts) + "\n")
-		builder.WriteString("  ControlMaster auto\n")
-		builder.WriteString("  ControlPersist 600\n")
-		builder.WriteString("  ControlPath " + sshConfigValue(sshControlPath(config, connection)) + "\n")
+		if connection.Name == target.Name && target.ForcePTY {
+			builder.WriteString("  RequestTTY force\n")
+			builder.WriteString("  ControlMaster no\n")
+			builder.WriteString("  ControlPath none\n")
+		} else {
+			builder.WriteString("  ControlMaster auto\n")
+			builder.WriteString("  ControlPersist 600\n")
+			builder.WriteString("  ControlPath " + sshConfigValue(sshControlPath(config, connection)) + "\n")
+		}
 		if connection.Key != "" {
 			keyPath := writtenKeys[connection.Key]
 			if keyPath == "" {
