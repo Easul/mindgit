@@ -629,6 +629,9 @@
         position: fixed;
         z-index: 1000;
         min-width: 190px;
+        max-height: calc(100vh - 12px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
         padding: 5px;
         border: 1px solid var(--line);
         border-radius: 6px;

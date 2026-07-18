@@ -154,7 +154,8 @@ separately under `ssh.dataDir`; they are never embedded in the main config.
           }
         ],
         "key": "production",
-        "jumpHosts": ["bastion"]
+        "jumpHosts": ["bastion"],
+        "forcePTY": false
       }
     ]
   }
@@ -188,6 +189,11 @@ SSH connections are also shown in the project switcher unless
 history, text viewing, editing, create, rename, and delete surfaces as local
 projects. `terminalOnly` is useful for bastion hosts that should only be used as
 jump hosts or command-line sessions.
+
+Set `forcePTY` to `true` only for SSH servers where ordinary non-interactive
+commands hang but `ssh -tt host command` succeeds. MindGit switches the forced
+terminal to raw/no-echo mode before running file and Git commands to avoid the
+usual terminal line-ending conversion.
 
 Each SSH connection can expose multiple named paths. Project names are displayed
 as `local / <folder>` for local directories and `<ssh-name> / <path-name>` for

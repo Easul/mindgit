@@ -518,6 +518,15 @@ function setupEditorShortcuts(editor) {
       return;
     }
 
+    if (blockSelection && isMultiLineBlockSelection(blockSelection) && !e.ctrlKey && !e.altKey && e.key === 'Enter') {
+      e.preventDefault();
+      recordSelectionHistoryState();
+      if (applyBlockSelectionResult(insertBlockSelectionNewline(editor, blockSelection))) {
+        commitEditorChange();
+      }
+      return;
+    }
+
     if (blockSelection && isCtrl && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
       const nextSelection = e.shiftKey

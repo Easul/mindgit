@@ -204,7 +204,13 @@ func buildSSHExecCommand(config SSHConfig, target SSHConnectionConfig, vaultKey 
 	for _, argument := range args {
 		remote += " " + shellQuote(argument)
 	}
-	command := exec.Command("ssh", "-F", template.Args[2], template.Args[4], remote)
+	commandArgs := []string{"-F", template.Args[2]}
+	if target.ForcePTY {
+		commandArgs = append(commandArgs, "-tt")
+		remote = "stty raw -echo 2>/dev/null || exit 126; " + remote
+	}
+	commandArgs = append(commandArgs, template.Args[4], remote)
+	command := exec.Command("ssh", commandArgs...)
 	command.Env = template.Env
 	return command, cleanup, nil
 }

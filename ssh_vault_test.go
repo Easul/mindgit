@@ -81,3 +81,30 @@ func TestBuildSSHTerminalCommandUsesOnlyRequiredKeys(t *testing.T) {
 		t.Fatalf("temporary SSH directory still exists: %v", err)
 	}
 }
+
+func TestBuildSSHExecCommandCanForceRawPTY(t *testing.T) {
+	dataDir := t.TempDir()
+	connection := SSHConnectionConfig{
+		Name: "legacy", Host: "legacy.example.com", User: "root", ForcePTY: true,
+		Paths: []SSHPathConfig{{Name: "root", Path: "/srv/app"}},
+	}
+	config := SSHConfig{
+		DataDir: dataDir, KnownHosts: filepath.Join(dataDir, "known_hosts"),
+		Connections: []SSHConnectionConfig{connection},
+	}
+	command, cleanup, err := buildSSHExecCommand(config, connection, nil, "/srv/app", "printf", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if len(command.Args) != 6 || command.Args[3] != "-tt" || command.Args[4] != "mindgit-1" {
+		t.Fatalf("SSH command args = %#v", command.Args)
+	}
+	remote := command.Args[len(command.Args)-1]
+	if !strings.HasPrefix(remote, "stty raw -echo 2>/dev/null || exit 126; ") {
+		t.Fatalf("remote command does not enable raw PTY: %q", remote)
+	}
+	if !strings.Contains(remote, "cd -- '/srv/app' && exec 'printf' 'hello'") {
+		t.Fatalf("remote command = %q", remote)
+	}
+}

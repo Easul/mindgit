@@ -66,6 +66,7 @@ type SSHConnectionConfig struct {
 	Paths        []SSHPathConfig `json:"paths,omitempty"`
 	Key          string          `json:"key,omitempty"`
 	JumpHosts    []string        `json:"jumpHosts,omitempty"`
+	ForcePTY     bool            `json:"forcePTY,omitempty"`
 	TerminalOnly bool            `json:"terminalOnly,omitempty"`
 }
 
