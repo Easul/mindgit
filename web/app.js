@@ -65,6 +65,7 @@ const legacyWorkspaceStorageKey = 'mindgit-workspace-v1';
 let splitPaneResizeObserver = null;
 let projectSwitcherSyncFrame = 0;
 let runtimeStatsTimer = 0;
+const stoppingRuntimeProcesses = new Set();
 
 async function ensureAuthenticated() {
   const response = await fetch('/api/auth/status', { cache: 'no-store' });
@@ -134,8 +135,12 @@ function formatRuntimeDuration(seconds) {
 function renderRuntimeStats(stats) {
   const cards = [
     ['CPU', stats.cpuAvailable ? `${stats.cpuPercent.toFixed(1)}%` : 'Unavailable'],
-    ['Memory', formatRuntimeBytes(stats.memoryBytes)],
+    ['Process RSS', stats.memoryAvailable ? formatRuntimeBytes(stats.memoryBytes) : 'Unavailable'],
     ['Go Heap', formatRuntimeBytes(stats.heapBytes)],
+    ['Go Reserved', formatRuntimeBytes(stats.goSystemBytes)],
+    ['Heap Reserved', formatRuntimeBytes(stats.heapSystemBytes)],
+    ['Go Stack', formatRuntimeBytes(stats.stackBytes)],
+    ['Go Metadata', formatRuntimeBytes(stats.metadataBytes)],
     ['Heap Objects', Number(stats.heapObjects).toLocaleString()],
     ['Goroutines', Number(stats.goroutines).toLocaleString()],
     ['GC Runs', Number(stats.gcCount).toLocaleString()],
@@ -151,6 +156,55 @@ function renderRuntimeStats(stats) {
       <div class="runtime-card-label">${escapeHTML(label)}</div>
       <div class="runtime-card-value">${escapeHTML(value)}</div>
     </div>`).join('');
+
+  const processes = Array.isArray(stats.processes) ? stats.processes : [];
+  $('runtime-child-memory').textContent = `${t('Child process memory')}: ${formatRuntimeBytes(stats.childMemoryBytes || 0)}`;
+  $('runtime-processes').innerHTML = processes.length ? processes.map((process) => {
+    const stopping = stoppingRuntimeProcesses.has(process.id);
+    const command = process.project ? `${process.command} · ${process.project}` : process.command;
+    return `<tr>
+      <td><span class="runtime-process-kind">${escapeHTML(t(runtimeProcessKind(process.kind)))}</span></td>
+      <td class="runtime-process-pid">${escapeHTML(String(process.pid || '-'))}</td>
+      <td class="runtime-process-command" title="${escapeHTML(command)}">${escapeHTML(command)}</td>
+      <td>${escapeHTML(process.memoryAvailable ? formatRuntimeBytes(process.memoryBytes) : t('Unavailable'))}</td>
+      <td>${escapeHTML(formatRuntimeDuration(process.uptimeSeconds))}</td>
+      <td>${process.closable ? `<button class="runtime-process-close" type="button" data-process-id="${escapeHTML(process.id)}" title="${escapeHTML(t('Close process'))}" aria-label="${escapeHTML(t('Close process'))}" ${stopping ? 'disabled' : ''}>${stopping ? '…' : '×'}</button>` : ''}</td>
+    </tr>`;
+  }).join('') : `<tr><td class="runtime-process-empty" colspan="6">${escapeHTML(t('No managed processes'))}</td></tr>`;
+}
+
+function runtimeProcessKind(kind) {
+  return ({
+    mindgit: 'MindGit',
+    git: 'Git command',
+    ssh: 'SSH command',
+    shell: 'Shell command',
+    rg: 'Search command',
+    terminal: 'Terminal',
+    'ssh-terminal': 'SSH terminal',
+  })[kind] || 'Command';
+}
+
+async function closeRuntimeProcess(id) {
+  if (!id || id === 'mindgit' || stoppingRuntimeProcesses.has(id)) return;
+  const confirmed = await showConfirmDialog({
+    title: t('Close process'),
+    message: t('This stops the selected command or terminal started by MindGit.'),
+    confirmLabel: t('Close'),
+    cancelLabel: t('Cancel'),
+    danger: true,
+  });
+  if (!confirmed) return;
+  stoppingRuntimeProcesses.add(id);
+  await refreshRuntimeStats();
+  try {
+    await api(`/api/runtime/process?id=${encodeURIComponent(id)}`, { method: 'DELETE', includeProject: false });
+  } catch (error) {
+    $('runtime-error').textContent = error.message;
+  } finally {
+    stoppingRuntimeProcesses.delete(id);
+    await refreshRuntimeStats();
+  }
 }
 
 async function refreshRuntimeStats() {
@@ -1288,6 +1342,10 @@ if ($('history-view')) $('history-view').addEventListener('click', () => setView
 if ($('theme-toggle')) $('theme-toggle').addEventListener('click', toggleTheme);
 if ($('runtime-stats')) $('runtime-stats').addEventListener('click', openRuntimeStats);
 if ($('runtime-close')) $('runtime-close').addEventListener('click', closeRuntimeStats);
+if ($('runtime-processes')) $('runtime-processes').addEventListener('click', (event) => {
+  const button = event.target.closest('.runtime-process-close');
+  if (button) closeRuntimeProcess(button.dataset.processId);
+});
 if ($('runtime-dialog')) $('runtime-dialog').addEventListener('click', (event) => {
   if (event.target === $('runtime-dialog')) closeRuntimeStats();
 });

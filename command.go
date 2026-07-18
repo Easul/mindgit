@@ -43,7 +43,7 @@ func (a App) run(name string, args ...string) (output string, runErr error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	runErr = cmd.Run()
+	runErr = a.runManagedCommand(cmd, cancel, name, args)
 	if runErr != nil && ctx.Err() == nil && a.sshName != "" && isSSHMultiplexFailure(stderr.String()) {
 		cleanup()
 		clearSSHControlSockets(a.ssh, sshConnection)
@@ -56,7 +56,7 @@ func (a App) run(name string, args ...string) (output string, runErr error) {
 			stderr.Reset()
 			retry.Stdout = &stdout
 			retry.Stderr = &stderr
-			runErr = retry.Run()
+			runErr = a.runManagedCommand(retry, cancel, name, args)
 		}
 	}
 	if runErr != nil {
@@ -105,7 +105,7 @@ func (a App) runInput(input string, name string, args ...string) (output string,
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	runErr = cmd.Run()
+	runErr = a.runManagedCommand(cmd, cancel, name, args)
 	if runErr != nil && ctx.Err() == nil && a.sshName != "" && isSSHMultiplexFailure(stderr.String()) {
 		cleanup()
 		clearSSHControlSockets(a.ssh, sshConnection)
@@ -119,7 +119,7 @@ func (a App) runInput(input string, name string, args ...string) (output string,
 			stderr.Reset()
 			retry.Stdout = &stdout
 			retry.Stderr = &stderr
-			runErr = retry.Run()
+			runErr = a.runManagedCommand(retry, cancel, name, args)
 		}
 	}
 	if runErr != nil {
@@ -133,6 +133,37 @@ func (a App) runInput(input string, name string, args ...string) (output string,
 		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), runErr, message)
 	}
 	return stdout.String(), nil
+}
+
+func (a App) runManagedCommand(cmd *exec.Cmd, cancel context.CancelFunc, name string, args []string) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	processID := ""
+	if a.monitor != nil && cmd.Process != nil {
+		kind := name
+		if a.sshName != "" {
+			kind = "ssh"
+		} else if kind == "sh" {
+			kind = "shell"
+		}
+		project := a.root
+		if a.sshName != "" {
+			project = a.sshName + " / " + a.root
+		}
+		processID = a.monitor.registerCommand(cmd.Process.Pid, kind, commandDisplay(name, args), project, cancel)
+		defer a.monitor.unregisterCommand(processID)
+	}
+	return cmd.Wait()
+}
+
+func commandDisplay(name string, args []string) string {
+	display := strings.TrimSpace(name + " " + strings.Join(args, " "))
+	const limit = 240
+	if len(display) > limit {
+		return display[:limit-1] + "…"
+	}
+	return display
 }
 
 func isSSHMultiplexFailure(message string) bool {

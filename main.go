@@ -89,6 +89,7 @@ func runApplication(args []string) error {
 	mux.HandleFunc("GET /api/terminals", app.handleTerminals)
 	mux.HandleFunc("DELETE /api/terminal", app.handleDeleteTerminal)
 	mux.HandleFunc("GET /api/runtime/stats", app.handleRuntimeStats)
+	mux.HandleFunc("DELETE /api/runtime/process", app.handleDeleteRuntimeProcess)
 	mux.HandleFunc("GET /api/ssh/connections", app.handleSSHConnections)
 	mux.Handle("/", staticHandler())
 

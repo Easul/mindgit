@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const terminalBufferLimit = 1024 * 1024
@@ -39,6 +40,7 @@ type TerminalSession struct {
 	master      *os.File
 	command     *exec.Cmd
 	sshName     string
+	startedAt   time.Time
 	cleanup     func()
 	cleanupOnce sync.Once
 
@@ -56,6 +58,15 @@ type TerminalSummary struct {
 	Project    string `json:"project"`
 	Closed     bool   `json:"closed"`
 	SSHName    string `json:"sshName,omitempty"`
+}
+
+type TerminalProcess struct {
+	ID        string
+	PID       int
+	Kind      string
+	Title     string
+	Project   string
+	StartedAt time.Time
 }
 
 type terminalClientMessage struct {
@@ -173,6 +184,7 @@ func (m *TerminalManager) createSSH(config SSHConfig, name string, vaultKey []by
 		master:      master,
 		command:     startedCommand,
 		sshName:     connection.Name,
+		startedAt:   time.Now(),
 		cleanup:     cleanup,
 		connections: make(map[*webSocketConn]struct{}),
 	}
@@ -200,6 +212,7 @@ func (m *TerminalManager) create(project ProjectSummary) (*TerminalSession, erro
 		root:        project.Root,
 		master:      master,
 		command:     command,
+		startedAt:   time.Now(),
 		connections: make(map[*webSocketConn]struct{}),
 	}
 	m.sessions[session.id] = session
@@ -208,6 +221,35 @@ func (m *TerminalManager) create(project ProjectSummary) (*TerminalSession, erro
 	go session.readOutput()
 	go session.wait()
 	return session, nil
+}
+
+func (m *TerminalManager) processes() []TerminalProcess {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	sessions := make([]*TerminalSession, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	m.mu.Unlock()
+
+	processes := make([]TerminalProcess, 0, len(sessions))
+	for _, session := range sessions {
+		session.mu.Lock()
+		if !session.closed && session.command != nil && session.command.Process != nil {
+			kind := "terminal"
+			if session.sshName != "" {
+				kind = "ssh-terminal"
+			}
+			processes = append(processes, TerminalProcess{
+				ID: session.id, PID: session.command.Process.Pid, Kind: kind,
+				Title: session.title, Project: session.project, StartedAt: session.startedAt,
+			})
+		}
+		session.mu.Unlock()
+	}
+	return processes
 }
 
 func (m *TerminalManager) get(id string) *TerminalSession {

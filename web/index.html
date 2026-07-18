@@ -179,6 +179,26 @@
         </div>
         <p id="runtime-error" class="dialog-error" role="alert"></p>
         <div id="runtime-grid" class="runtime-grid"></div>
+        <p class="runtime-note">Process RSS is the physical memory currently used by MindGit. Go reserved memory may be larger and is not fully resident. Managed process memory includes descendants where supported.</p>
+        <div class="runtime-process-heading">
+          <h3>Managed Processes</h3>
+          <span id="runtime-child-memory"></span>
+        </div>
+        <div class="runtime-process-table-wrap">
+          <table class="runtime-process-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>PID</th>
+                <th>Process</th>
+                <th>Memory</th>
+                <th>Running</th>
+                <th><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="runtime-processes"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 

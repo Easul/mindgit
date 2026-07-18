@@ -733,7 +733,11 @@
         gap: 12px;
       }
       .dialog-title-row .prompt-dialog-title { margin-bottom: 0; }
-      .runtime-dialog { width: min(680px, calc(100vw - 40px)); }
+      .runtime-dialog {
+        width: min(920px, calc(100vw - 40px));
+        max-height: min(820px, calc(100dvh - 40px));
+        overflow-y: auto;
+      }
       .runtime-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -762,6 +766,71 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      .runtime-note {
+        margin: 12px 0 16px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .runtime-process-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+      .runtime-process-heading h3 { margin: 0; font-size: 14px; }
+      .runtime-process-heading span { color: var(--muted); font-size: 12px; }
+      .runtime-process-table-wrap {
+        max-height: 310px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      .runtime-process-table {
+        width: 100%;
+        min-width: 700px;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .runtime-process-table th,
+      .runtime-process-table td {
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        white-space: nowrap;
+      }
+      .runtime-process-table th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        color: var(--muted);
+        background: var(--panel);
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+      .runtime-process-table tr:last-child td { border-bottom: 0; }
+      .runtime-process-command {
+        max-width: 330px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .runtime-process-pid { font-variant-numeric: tabular-nums; }
+      .runtime-process-kind {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 999px;
+        color: var(--blue);
+        background: color-mix(in srgb, var(--blue) 12%, transparent);
+      }
+      .runtime-process-close {
+        width: 28px;
+        min-width: 28px;
+        height: 28px;
+        padding: 0;
+        color: var(--red);
+      }
+      .runtime-process-empty { color: var(--muted); text-align: center !important; }
 
       .upload-dialog { width: min(560px, calc(100vw - 24px)); }
       .upload-summary.error { color: var(--red); }
