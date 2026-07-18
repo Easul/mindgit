@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestSSHMultiplexFailureDetection(t *testing.T) {
@@ -70,9 +73,43 @@ exec sh -c "$last"
 
 func TestDisableSSHMultiplexing(t *testing.T) {
 	command := exec.Command("ssh", "-F", "/tmp/config", "mindgit-1", "pwd")
-	retry := disableSSHMultiplexing(command)
+	retry := disableSSHMultiplexing(context.Background(), command)
 	want := []string{"-F", "/tmp/config", "-o", "ControlMaster=no", "-o", "ControlPath=none", "mindgit-1", "pwd"}
 	if !reflect.DeepEqual(retry.Args[1:], want) {
 		t.Fatalf("retry args = %#v, want %#v", retry.Args, want)
+	}
+}
+
+func TestCommandTimeoutStopsProcess(t *testing.T) {
+	if os.Getenv("MINDGIT_TEST_SLEEP_PROCESS") == "1" {
+		time.Sleep(5 * time.Second)
+		return
+	}
+
+	t.Setenv("MINDGIT_TEST_SLEEP_PROCESS", "1")
+	app := App{root: t.TempDir(), commandTimeout: 50 * time.Millisecond}
+	started := time.Now()
+	_, err := app.run(os.Args[0], "-test.run=TestCommandTimeoutStopsProcess")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("timed out command took %v", elapsed)
+	}
+}
+
+func TestCommandContextUsesRequestCancellation(t *testing.T) {
+	requestContext, cancelRequest := context.WithCancel(context.Background())
+	app := App{requestContext: requestContext, commandTimeout: time.Minute}
+	ctx, cancelCommand := app.commandContext()
+	defer cancelCommand()
+	cancelRequest()
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatalf("context error = %v", ctx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("command context did not follow request cancellation")
 	}
 }

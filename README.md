@@ -103,7 +103,9 @@ separately under `ssh.dataDir`; they are never embedded in the main config.
   "version": 1,
   "server": {
     "bind": "127.0.0.1",
-    "port": 8787
+    "port": 8787,
+    "commandTimeoutSeconds": 120,
+    "maxUploadMB": 64
   },
   "auth": {
     "enabled": true,
@@ -161,6 +163,11 @@ separately under `ssh.dataDir`; they are never embedded in the main config.
   }
 }
 ```
+
+`commandTimeoutSeconds` limits non-interactive Git, search, file, and SSH
+commands so disconnected requests or unresponsive servers do not leave work
+running indefinitely. `maxUploadMB` applies to both local and SSH uploads and
+also bounds editor save requests.
 
 Import each private key after setting the MindGit password:
 

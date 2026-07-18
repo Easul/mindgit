@@ -131,6 +131,52 @@ func TestHandleUploadFileRejectsExistingPath(t *testing.T) {
 	}
 }
 
+func TestHandleUploadFileRejectsBodyOverLimit(t *testing.T) {
+	root := t.TempDir()
+	app := testRequestApp(root)
+	app.maxUploadBytes = 4
+
+	response := newTestResponse()
+	app.handleUploadFile(response, newTestRequest(t, http.MethodPost, "/api/upload?name=large.txt", strings.NewReader("12345")))
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusRequestEntityTooLarge, response.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "large.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversized upload created a file: %v", err)
+	}
+	assertNoUploadParts(t, root)
+}
+
+func TestHandleCreatePathRejectsUnknownJSONFields(t *testing.T) {
+	root := t.TempDir()
+	response := newTestResponse()
+	testRequestApp(root).handleCreatePath(response, newTestRequest(t, http.MethodPost, "/api/fs", strings.NewReader(
+		`{"path":"new.txt","kind":"file","unexpected":true}`,
+	)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "new.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid request created a file: %v", err)
+	}
+}
+
+func TestHandleSaveFileRejectsContentOverLimit(t *testing.T) {
+	root := t.TempDir()
+	app := testRequestApp(root)
+	app.maxUploadBytes = 4
+	response := newTestResponse()
+	app.handleSaveFile(response, newTestRequest(t, http.MethodPost, "/api/file", strings.NewReader(
+		`{"path":"large.txt","content":"12345","create":true}`,
+	)))
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusRequestEntityTooLarge, response.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "large.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversized save created a file: %v", err)
+	}
+}
+
 func TestHandleSaveFileCreatesNewFileExclusively(t *testing.T) {
 	root := t.TempDir()
 	app := testRequestApp(root)

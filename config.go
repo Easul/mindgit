@@ -7,18 +7,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-const configFileVersion = 1
+const (
+	configFileVersion            = 1
+	defaultCommandTimeoutSeconds = 120
+	defaultMaxUploadMB           = 64
+)
 
 type Config struct {
-	roots      []string
-	host       string
-	port       int
-	configPath string
-	auth       AuthConfig
-	ssh        SSHConfig
-	monitoring MonitoringConfig
+	roots          []string
+	host           string
+	port           int
+	configPath     string
+	auth           AuthConfig
+	ssh            SSHConfig
+	monitoring     MonitoringConfig
+	commandTimeout time.Duration
+	maxUploadBytes int64
 }
 
 type FileConfig struct {
@@ -31,8 +38,10 @@ type FileConfig struct {
 }
 
 type ServerConfig struct {
-	Bind string `json:"bind"`
-	Port int    `json:"port"`
+	Bind                  string `json:"bind"`
+	Port                  int    `json:"port"`
+	CommandTimeoutSeconds int    `json:"commandTimeoutSeconds"`
+	MaxUploadMB           int64  `json:"maxUploadMB"`
 }
 
 type AuthConfig struct {
@@ -90,8 +99,13 @@ func (m *multiStringFlag) Set(value string) error {
 
 func defaultFileConfig() FileConfig {
 	return FileConfig{
-		Version:    configFileVersion,
-		Server:     ServerConfig{Bind: "127.0.0.1", Port: 8787},
+		Version: configFileVersion,
+		Server: ServerConfig{
+			Bind:                  "127.0.0.1",
+			Port:                  8787,
+			CommandTimeoutSeconds: defaultCommandTimeoutSeconds,
+			MaxUploadMB:           defaultMaxUploadMB,
+		},
 		Auth:       AuthConfig{Enabled: true, SessionHours: 12},
 		Monitoring: MonitoringConfig{Enabled: true},
 		Projects:   []ProjectConfig{},
@@ -134,12 +148,14 @@ func parseConfig(args []string) (Config, error) {
 	}
 
 	config := Config{
-		host:       fileConfig.Server.Bind,
-		port:       fileConfig.Server.Port,
-		configPath: configPath,
-		auth:       fileConfig.Auth,
-		ssh:        fileConfig.SSH,
-		monitoring: fileConfig.Monitoring,
+		host:           fileConfig.Server.Bind,
+		port:           fileConfig.Server.Port,
+		configPath:     configPath,
+		auth:           fileConfig.Auth,
+		ssh:            fileConfig.SSH,
+		monitoring:     fileConfig.Monitoring,
+		commandTimeout: time.Duration(fileConfig.Server.CommandTimeoutSeconds) * time.Second,
+		maxUploadBytes: fileConfig.Server.MaxUploadMB << 20,
 	}
 	config.ssh = resolveSSHPaths(config.configPath, config.ssh)
 	flags := flag.NewFlagSet("mindgit", flag.ContinueOnError)
@@ -210,6 +226,12 @@ func parseConfig(args []string) (Config, error) {
 	}
 	if strings.TrimSpace(config.host) == "" {
 		return Config{}, fmt.Errorf("bind address cannot be empty")
+	}
+	if fileConfig.Server.CommandTimeoutSeconds < 1 || fileConfig.Server.CommandTimeoutSeconds > 3600 {
+		return Config{}, fmt.Errorf("server commandTimeoutSeconds must be between 1 and 3600")
+	}
+	if fileConfig.Server.MaxUploadMB < 1 || fileConfig.Server.MaxUploadMB > 10240 {
+		return Config{}, fmt.Errorf("server maxUploadMB must be between 1 and 10240")
 	}
 
 	if len(dirs) == 0 {

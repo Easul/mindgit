@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -41,8 +40,8 @@ func (a App) handleTreeBatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		req.Paths = r.URL.Query()["path"]
 	} else {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, nil, err)
+		if err := decodeJSONBody(w, r, &req, maxJSONRequestBytes); err != nil {
+			writeRequestError(w, err)
 			return
 		}
 	}
@@ -134,9 +133,7 @@ func (a App) status() (StatusResponse, error) {
 
 func (a App) loadGitChanges() (bool, []ChangedFile, error) {
 	if !a.isGitRepository() {
-		if a.sshName != "" {
-			a.cache.storeGit(a.defaultProject, false, nil)
-		}
+		a.cache.storeGit(a.defaultProject, false, nil)
 		return false, nil, nil
 	}
 
@@ -144,17 +141,17 @@ func (a App) loadGitChanges() (bool, []ChangedFile, error) {
 	if err != nil {
 		return false, nil, err
 	}
-	if a.sshName != "" {
-		a.cache.storeGit(a.defaultProject, true, files)
-	}
+	a.cache.storeGit(a.defaultProject, true, files)
 	return true, files, nil
 }
 
 func (a App) loadGitChangesCached() (bool, []ChangedFile, error) {
+	ttl := localGitSnapshotTTL
 	if a.sshName != "" {
-		if gitAvailable, files, ok := a.cache.loadGit(a.defaultProject); ok {
-			return gitAvailable, files, nil
-		}
+		ttl = remoteGitSnapshotTTL
+	}
+	if gitAvailable, files, ok := a.cache.loadGit(a.defaultProject, ttl); ok {
+		return gitAvailable, files, nil
 	}
 	return a.loadGitChanges()
 }

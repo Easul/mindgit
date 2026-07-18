@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,12 +12,14 @@ import (
 )
 
 func (a App) run(name string, args ...string) (output string, runErr error) {
+	ctx, cancel := a.commandContext()
+	defer cancel()
 	started := time.Now()
 	if a.monitor != nil {
 		a.monitor.commandStarted()
 		defer func() { a.monitor.commandFinished(name, time.Since(started), runErr != nil) }()
 	}
-	cmd := exec.Command(name, args...)
+	cmd := exec.CommandContext(ctx, name, args...)
 	cleanup := func() {}
 	var sshConnection SSHConnectionConfig
 	if a.sshName != "" {
@@ -25,7 +28,7 @@ func (a App) run(name string, args ...string) (output string, runErr error) {
 			return "", fmt.Errorf("unknown SSH connection: %s", a.sshName)
 		}
 		sshConnection = connection
-		cmd, cleanup, runErr = buildSSHExecCommand(a.ssh, connection, a.vaultKey, a.root, name, args...)
+		cmd, cleanup, runErr = buildSSHExecCommand(ctx, a.ssh, connection, a.vaultKey, a.root, name, args...)
 		if runErr != nil {
 			return "", runErr
 		}
@@ -41,13 +44,13 @@ func (a App) run(name string, args ...string) (output string, runErr error) {
 	cmd.Stderr = &stderr
 
 	runErr = cmd.Run()
-	if runErr != nil && a.sshName != "" && isSSHMultiplexFailure(stderr.String()) {
+	if runErr != nil && ctx.Err() == nil && a.sshName != "" && isSSHMultiplexFailure(stderr.String()) {
 		cleanup()
 		clearSSHControlSockets(a.ssh, sshConnection)
-		retry, retryCleanup, retryErr := buildSSHExecCommand(a.ssh, sshConnection, a.vaultKey, a.root, name, args...)
+		retry, retryCleanup, retryErr := buildSSHExecCommand(ctx, a.ssh, sshConnection, a.vaultKey, a.root, name, args...)
 		if retryErr == nil {
 			defer retryCleanup()
-			retry = disableSSHMultiplexing(retry)
+			retry = disableSSHMultiplexing(ctx, retry)
 			retry.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 			stdout.Reset()
 			stderr.Reset()
@@ -57,6 +60,9 @@ func (a App) run(name string, args ...string) (output string, runErr error) {
 		}
 	}
 	if runErr != nil {
+		if ctx.Err() != nil {
+			return stdout.String(), fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), ctx.Err())
+		}
 		message := strings.TrimSpace(stderr.String())
 		if message == "" {
 			message = runErr.Error()
@@ -67,12 +73,14 @@ func (a App) run(name string, args ...string) (output string, runErr error) {
 }
 
 func (a App) runInput(input string, name string, args ...string) (output string, runErr error) {
+	ctx, cancel := a.commandContext()
+	defer cancel()
 	started := time.Now()
 	if a.monitor != nil {
 		a.monitor.commandStarted()
 		defer func() { a.monitor.commandFinished(name, time.Since(started), runErr != nil) }()
 	}
-	cmd := exec.Command(name, args...)
+	cmd := exec.CommandContext(ctx, name, args...)
 	cleanup := func() {}
 	var sshConnection SSHConnectionConfig
 	if a.sshName != "" {
@@ -81,7 +89,7 @@ func (a App) runInput(input string, name string, args ...string) (output string,
 			return "", fmt.Errorf("unknown SSH connection: %s", a.sshName)
 		}
 		sshConnection = connection
-		cmd, cleanup, runErr = buildSSHExecCommand(a.ssh, connection, a.vaultKey, a.root, name, args...)
+		cmd, cleanup, runErr = buildSSHExecCommand(ctx, a.ssh, connection, a.vaultKey, a.root, name, args...)
 		if runErr != nil {
 			return "", runErr
 		}
@@ -98,13 +106,13 @@ func (a App) runInput(input string, name string, args ...string) (output string,
 	cmd.Stderr = &stderr
 
 	runErr = cmd.Run()
-	if runErr != nil && a.sshName != "" && isSSHMultiplexFailure(stderr.String()) {
+	if runErr != nil && ctx.Err() == nil && a.sshName != "" && isSSHMultiplexFailure(stderr.String()) {
 		cleanup()
 		clearSSHControlSockets(a.ssh, sshConnection)
-		retry, retryCleanup, retryErr := buildSSHExecCommand(a.ssh, sshConnection, a.vaultKey, a.root, name, args...)
+		retry, retryCleanup, retryErr := buildSSHExecCommand(ctx, a.ssh, sshConnection, a.vaultKey, a.root, name, args...)
 		if retryErr == nil {
 			defer retryCleanup()
-			retry = disableSSHMultiplexing(retry)
+			retry = disableSSHMultiplexing(ctx, retry)
 			retry.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 			retry.Stdin = strings.NewReader(input)
 			stdout.Reset()
@@ -115,6 +123,9 @@ func (a App) runInput(input string, name string, args ...string) (output string,
 		}
 	}
 	if runErr != nil {
+		if ctx.Err() != nil {
+			return stdout.String(), fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), ctx.Err())
+		}
 		message := strings.TrimSpace(stderr.String())
 		if message == "" {
 			message = runErr.Error()
@@ -129,15 +140,27 @@ func isSSHMultiplexFailure(message string) bool {
 	return strings.Contains(message, "mux_client") || strings.Contains(message, "control master")
 }
 
-func disableSSHMultiplexing(command *exec.Cmd) *exec.Cmd {
+func disableSSHMultiplexing(ctx context.Context, command *exec.Cmd) *exec.Cmd {
 	if command == nil || len(command.Args) < 5 || command.Args[1] != "-F" {
 		return command
 	}
 	args := []string{"-F", command.Args[2], "-o", "ControlMaster=no", "-o", "ControlPath=none"}
 	args = append(args, command.Args[3:]...)
-	retry := exec.Command(command.Path, args...)
+	retry := exec.CommandContext(ctx, command.Path, args...)
 	retry.Env = command.Env
 	return retry
+}
+
+func (a App) commandContext() (context.Context, context.CancelFunc) {
+	ctx := a.requestContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := a.commandTimeout
+	if timeout <= 0 {
+		timeout = defaultCommandTimeoutSeconds * time.Second
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func isExitCode(err error, code int) bool {

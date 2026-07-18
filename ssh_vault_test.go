@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,7 +93,7 @@ func TestBuildSSHExecCommandCanForceRawPTY(t *testing.T) {
 		DataDir: dataDir, KnownHosts: filepath.Join(dataDir, "known_hosts"),
 		Connections: []SSHConnectionConfig{connection},
 	}
-	command, cleanup, err := buildSSHExecCommand(config, connection, nil, "/srv/app", "printf", "hello")
+	command, cleanup, err := buildSSHExecCommand(context.Background(), config, connection, nil, "/srv/app", "printf", "hello")
 	if err != nil {
 		t.Fatal(err)
 	}

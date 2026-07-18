@@ -5,10 +5,13 @@ import (
 	"time"
 )
 
-const remoteGitSnapshotTTL = 15 * time.Second
+const (
+	localGitSnapshotTTL  = time.Second
+	remoteGitSnapshotTTL = 15 * time.Second
+)
 
 type ProjectCache struct {
-	mu           sync.Mutex
+	mu           sync.RWMutex
 	gitSnapshots map[string]gitSnapshot
 }
 
@@ -22,14 +25,14 @@ func NewProjectCache() *ProjectCache {
 	return &ProjectCache{gitSnapshots: make(map[string]gitSnapshot)}
 }
 
-func (c *ProjectCache) loadGit(projectKey string) (bool, []ChangedFile, bool) {
+func (c *ProjectCache) loadGit(projectKey string, ttl time.Duration) (bool, []ChangedFile, bool) {
 	if c == nil {
 		return false, nil, false
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	snapshot, ok := c.gitSnapshots[projectKey]
-	if !ok || time.Since(snapshot.created) > remoteGitSnapshotTTL {
+	if !ok || ttl <= 0 || time.Since(snapshot.created) > ttl {
 		return false, nil, false
 	}
 	return snapshot.gitAvailable, append([]ChangedFile(nil), snapshot.files...), true

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -191,7 +192,7 @@ func defaultSSHPath(connection SSHConnectionConfig) string {
 	return connection.RemoteDir
 }
 
-func buildSSHExecCommand(config SSHConfig, target SSHConnectionConfig, vaultKey []byte, directory, name string, args ...string) (*exec.Cmd, func(), error) {
+func buildSSHExecCommand(ctx context.Context, config SSHConfig, target SSHConnectionConfig, vaultKey []byte, directory, name string, args ...string) (*exec.Cmd, func(), error) {
 	template, cleanup, err := buildSSHTerminalCommand(config, target, vaultKey)
 	if err != nil {
 		return nil, nil, err
@@ -210,7 +211,7 @@ func buildSSHExecCommand(config SSHConfig, target SSHConnectionConfig, vaultKey 
 		remote = "stty raw -echo 2>/dev/null || exit 126; " + remote
 	}
 	commandArgs = append(commandArgs, template.Args[4], remote)
-	command := exec.Command("ssh", commandArgs...)
+	command := exec.CommandContext(ctx, "ssh", commandArgs...)
 	command.Env = template.Env
 	return command, cleanup, nil
 }

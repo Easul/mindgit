@@ -229,10 +229,17 @@ func (a App) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, errors.New("cannot modify .git paths"))
 		return
 	}
+	limit := app.uploadLimit()
+	if r.ContentLength > limit {
+		writeJSONStatus(w, http.StatusRequestEntityTooLarge, nil,
+			fmt.Errorf("upload exceeds %d MiB limit", limit>>20))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if app.sshName != "" {
 		content, err := io.ReadAll(r.Body)
 		if err != nil {
-			writeJSON(w, nil, err)
+			writeRequestError(w, err)
 			return
 		}
 		if err := app.writeProjectFile(filepath.ToSlash(relativePath), content, true); err != nil {
@@ -284,7 +291,7 @@ func (a App) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		copyErr = closeErr
 	}
 	if copyErr != nil {
-		writeJSON(w, nil, copyErr)
+		writeRequestError(w, copyErr)
 		return
 	}
 	if err := os.Rename(temporaryPath, targetPath); err != nil {
@@ -310,8 +317,13 @@ func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req SaveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, nil, err)
+	if err := decodeJSONBody(w, r, &req, app.uploadLimit()+maxJSONRequestBytes); err != nil {
+		writeRequestError(w, err)
+		return
+	}
+	if int64(len(req.Content)) > app.uploadLimit() {
+		writeJSONStatus(w, http.StatusRequestEntityTooLarge, nil,
+			fmt.Errorf("file content exceeds %d MiB limit", app.uploadLimit()>>20))
 		return
 	}
 
@@ -375,8 +387,8 @@ func (a App) handleCreatePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreatePathRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, nil, err)
+	if err := decodeJSONBody(w, r, &req, maxJSONRequestBytes); err != nil {
+		writeRequestError(w, err)
 		return
 	}
 
@@ -448,8 +460,8 @@ func (a App) handleRenamePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req RenamePathRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, nil, err)
+	if err := decodeJSONBody(w, r, &req, maxJSONRequestBytes); err != nil {
+		writeRequestError(w, err)
 		return
 	}
 
@@ -527,8 +539,8 @@ func (a App) handleDeletePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req DeletePathRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, nil, err)
+	if err := decodeJSONBody(w, r, &req, maxJSONRequestBytes); err != nil {
+		writeRequestError(w, err)
 		return
 	}
 	if !req.Confirm {
@@ -580,8 +592,8 @@ func (a App) handleRestoreStaged(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req StageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, nil, err)
+	if err := decodeJSONBody(w, r, &req, maxJSONRequestBytes); err != nil {
+		writeRequestError(w, err)
 		return
 	}
 

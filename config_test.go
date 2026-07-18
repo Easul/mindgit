@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestParseConfigVersion(t *testing.T) {
@@ -41,7 +42,8 @@ func TestParseConfigLoadsFileAndAllowsCLIOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileConfig := defaultFileConfig()
-	fileConfig.Server = ServerConfig{Bind: "0.0.0.0", Port: 9000}
+	fileConfig.Server.Bind = "0.0.0.0"
+	fileConfig.Server.Port = 9000
 	fileConfig.Auth.PasswordHash = passwordHash
 	fileConfig.Projects = []ProjectConfig{{Path: root}}
 	content, err := json.Marshal(fileConfig)
@@ -59,8 +61,43 @@ func TestParseConfigLoadsFileAndAllowsCLIOverrides(t *testing.T) {
 	if config.host != "127.0.0.1" || config.port != 9898 {
 		t.Fatalf("unexpected server config: %s:%d", config.host, config.port)
 	}
+	if config.commandTimeout != defaultCommandTimeoutSeconds*time.Second {
+		t.Fatalf("command timeout = %v", config.commandTimeout)
+	}
+	if config.maxUploadBytes != defaultMaxUploadMB<<20 {
+		t.Fatalf("max upload bytes = %d", config.maxUploadBytes)
+	}
 	if len(config.roots) != 1 || config.roots[0] != root {
 		t.Fatalf("roots = %#v, want %q", config.roots, root)
+	}
+}
+
+func TestParseConfigRejectsInvalidServerLimits(t *testing.T) {
+	root := t.TempDir()
+	for _, test := range []struct {
+		name   string
+		update func(*FileConfig)
+	}{
+		{name: "command timeout", update: func(config *FileConfig) { config.Server.CommandTimeoutSeconds = 0 }},
+		{name: "upload limit", update: func(config *FileConfig) { config.Server.MaxUploadMB = 0 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			fileConfig := defaultFileConfig()
+			fileConfig.Auth.Enabled = false
+			fileConfig.Projects = []ProjectConfig{{Path: root}}
+			test.update(&fileConfig)
+			content, err := json.Marshal(fileConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configPath, content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parseConfig([]string{"--config", configPath}); err == nil {
+				t.Fatal("expected invalid server limits to fail")
+			}
+		})
 	}
 }
 
@@ -71,6 +108,28 @@ func TestDefaultConfigAndDataNames(t *testing.T) {
 	resolved := resolveSSHPaths(filepath.Join(t.TempDir(), "config.json"), SSHConfig{})
 	if filepath.Base(resolved.DataDir) != "data" {
 		t.Fatalf("default data dir = %q", resolved.DataDir)
+	}
+}
+
+func TestLoadFileConfigKeepsNewServerDefaultsForOlderConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	content := `{
+  "version": 1,
+  "server": {"bind": "127.0.0.1", "port": 8787},
+  "auth": {"enabled": false, "sessionHours": 12},
+  "monitoring": {"enabled": true},
+  "projects": [],
+  "ssh": {"connections": []}
+}`
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := loadFileConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Server.CommandTimeoutSeconds != defaultCommandTimeoutSeconds || config.Server.MaxUploadMB != defaultMaxUploadMB {
+		t.Fatalf("server defaults were not preserved: %#v", config.Server)
 	}
 }
 

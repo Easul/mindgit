@@ -1,28 +1,38 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 )
 
 func main() {
-	config, err := parseConfig(os.Args[1:])
-	if err != nil {
+	if err := runApplication(os.Args[1:]); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func runApplication(args []string) error {
+	config, err := parseConfig(args)
+	if err != nil {
+		return err
 	}
 	if len(config.roots) == 0 {
-		return
+		return nil
 	}
 	if err := validateSSHConfig(config.ssh); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	dependencies, err := checkDependencies(config)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	for _, dependency := range dependencies.Optional {
 		log.Printf("Optional command not found: %s", dependency)
@@ -41,6 +51,8 @@ func main() {
 		monitor:        monitor,
 		ssh:            config.ssh,
 		cache:          NewProjectCache(),
+		commandTimeout: config.commandTimeout,
+		maxUploadBytes: config.maxUploadBytes,
 	}
 	auth := NewAuthManager(config.auth, config.ssh.VaultSalt)
 	app.auth = auth
@@ -86,7 +98,37 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-	log.Fatal(server.ListenAndServe())
+	serveErrors := make(chan error, 1)
+	go func() {
+		serveErrors <- server.ListenAndServe()
+	}()
+
+	shutdownSignal, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	select {
+	case serveErr := <-serveErrors:
+		app.terminals.closeAll()
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			return nil
+		}
+		return serveErr
+	case <-shutdownSignal.Done():
+		log.Printf("MindGit shutting down")
+	}
+
+	app.terminals.closeAll()
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownContext); err != nil {
+		_ = server.Close()
+		return err
+	}
+	serveErr := <-serveErrors
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		return nil
+	}
+	return serveErr
 }
 
 func securityHeaders(next http.Handler) http.Handler {

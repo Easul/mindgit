@@ -256,6 +256,24 @@ func (m *TerminalManager) remove(id string) bool {
 	return ok
 }
 
+func (m *TerminalManager) closeAll() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	sessions := make([]*TerminalSession, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	m.sessions = make(map[string]*TerminalSession)
+	m.next = 0
+	m.mu.Unlock()
+
+	for _, session := range sessions {
+		session.close()
+	}
+}
+
 func (s *TerminalSession) serve(connection *webSocketConn) {
 	s.attach(connection)
 	defer s.detach(connection)

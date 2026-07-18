@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type App struct {
@@ -19,6 +21,9 @@ type App struct {
 	sshName        string
 	vaultKey       []byte
 	cache          *ProjectCache
+	requestContext context.Context
+	commandTimeout time.Duration
+	maxUploadBytes int64
 }
 
 type ProjectSummary struct {
@@ -109,6 +114,9 @@ func (a App) appForRequest(r *http.Request) (App, error) {
 		sshName:        project.SSHName,
 		vaultKey:       vaultKey,
 		cache:          a.cache,
+		requestContext: r.Context(),
+		commandTimeout: a.commandTimeout,
+		maxUploadBytes: a.maxUploadBytes,
 	}, nil
 }
 
@@ -121,4 +129,11 @@ func (a App) currentProject() ProjectSummary {
 		Name: filepath.Base(a.root),
 		Root: a.root,
 	}
+}
+
+func (a App) uploadLimit() int64 {
+	if a.maxUploadBytes > 0 {
+		return a.maxUploadBytes
+	}
+	return defaultMaxUploadMB << 20
 }
