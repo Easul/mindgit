@@ -54,6 +54,7 @@ const state = {
   openTabs: [],
   tabStates: {},
   tabDrafts: {},
+  tabOriginals: {},
   temporaryTabs: new Map(),
 };
 
@@ -351,6 +352,7 @@ function applyProjectWorkspace(projectKey) {
   state.openTabs = saved.openTabs;
   state.tabStates = saved.tabStates;
   state.tabDrafts = {};
+  state.tabOriginals = {};
   state.temporaryTabs = new Map();
   state.expandedGroups = new Set(saved.expandedGroups);
   state.splitPane = saved.splitPane;
@@ -458,9 +460,14 @@ function broadcastEditorContent(path, content) {
 function applyExternalFileContent(path, content) {
   if (!path || state.selected !== path) return;
 
+  const editor = $('editor');
+  if (editor?._mindgitComposing) {
+    editor._mindgitPendingRemoteContent = content;
+    return;
+  }
+
   state.content = content;
   state.tabDrafts[path] = content;
-  const editor = $('editor');
   if (editor) {
     if (editor.value === content) return;
     const selectionStart = Math.min(editor.selectionStart, content.length);
@@ -597,8 +604,54 @@ function openProjectMenu(anchor) {
   })));
 }
 
+function rememberTabOriginal(path, content) {
+  if (!path || isTemporaryTab(path) || typeof content !== 'string') return;
+  if (typeof state.tabOriginals[path] !== 'string') {
+    state.tabOriginals[path] = content;
+  }
+}
+
+function tabHasUnsavedChanges(path) {
+  if (!path) return false;
+  if (isTemporaryTab(path)) return state.temporaryTabs.has(path);
+  const draft = state.tabDrafts[path];
+  const original = state.tabOriginals[path];
+  return typeof draft === 'string' && typeof original === 'string' && draft !== original;
+}
+
+function unsavedTabPaths() {
+  return state.openTabs.filter(tabHasUnsavedChanges);
+}
+
+async function saveTabsBeforeProjectSwitch() {
+  saveCurrentTabState();
+  const paths = unsavedTabPaths();
+  if (!paths.length) return true;
+
+  const names = paths.map((path) => isTemporaryTab(path)
+    ? state.temporaryTabs.get(path)?.name || 'Untitled'
+    : path);
+  const preview = names.slice(0, 5).join('\n');
+  const remainder = names.length > 5 ? `\n…and ${names.length - 5} more` : '';
+  const confirmed = await showConfirmDialog({
+    title: 'Save Unsaved Tabs',
+    message: `${names.length} tab(s) have unsaved changes:\n${preview}${remainder}\n\nSave them before switching projects?`,
+    confirmLabel: 'Save and Switch',
+    cancelLabel: 'Cancel',
+  });
+  if (!confirmed) return false;
+
+  for (const path of paths) {
+    if (!state.openTabs.includes(path)) continue;
+    if (state.selected !== path) await selectTab(path);
+    if (!await saveFile()) return false;
+  }
+  return true;
+}
+
 async function switchProject(projectKey) {
   if (!projectKey || projectKey === state.currentProjectKey) return;
+  if (!await saveTabsBeforeProjectSwitch()) return;
   saveCurrentTabState();
   captureProjectWorkspace();
   cleanupSplitPaneResizeObserver();
@@ -1024,6 +1077,7 @@ async function applyEmbedState(payload = {}) {
     state.selectedCommitFile = null;
     state.tabStates = {};
     state.tabDrafts = {};
+    state.tabOriginals = {};
     updateProjectSwitcher();
   }
 
@@ -1364,6 +1418,11 @@ if ($('search-form')) $('search-form').addEventListener('submit', (event) => {
   event.preventDefault();
   search();
 });
+if ($('search')) $('search').addEventListener('input', (event) => {
+  if (!event.currentTarget.value.trim()) {
+    $('search-results').innerHTML = '<p>Enter a keyword to search the project.</p>';
+  }
+});
 window.addEventListener('message', handleSplitPaneMessage);
 window.addEventListener('beforeunload', persistWorkspaceBeforeUnload);
 window.addEventListener('pagehide', persistWorkspaceBeforeUnload);
@@ -1374,6 +1433,12 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) clearLinkOpenModifierHint();
 });
 document.addEventListener('keydown', (event) => setLinkOpenModifierHint(hasOpenLinkModifier(event)), true);
+document.addEventListener('keydown', (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 'f') return;
+  if (state.mode !== 'full' || !showFullViewerFindBar()) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 document.addEventListener('keyup', (event) => setLinkOpenModifierHint(hasOpenLinkModifier(event)), true);
 document.addEventListener('click', handleViewerLinkClick, true);
 document.addEventListener('wheel', syncInteractionTargetFromWheel, { capture: true, passive: true });

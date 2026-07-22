@@ -1,4 +1,5 @@
 let pdfJSImportPromise = null;
+let fullViewerFindBar = null;
 
 function updateEditButton(label, options = {}) {
   renderFileTabs();
@@ -96,6 +97,7 @@ async function renderSelected() {
     }
 
     const content = draftContent ?? (await api(`/api/file?path=${encodeURIComponent(state.selected)}`)).content;
+    if (draftContent === null) rememberTabOriginal(state.selected, content);
     renderTextEditor(content);
     return;
   }
@@ -118,6 +120,8 @@ async function renderSelected() {
       $('viewer').innerHTML = `<div class="binary-notice"><div><strong>Binary File</strong><p>This file cannot be displayed as text.</p></div></div>`;
     } else {
       const data = await api(`/api/file?path=${encodeURIComponent(state.selected)}`);
+      rememberTabOriginal(state.selected, data.content);
+      state.content = data.content;
       renderFullContent(data.content, state.selected);
     }
   } else {
@@ -720,10 +724,9 @@ function cleanupViewerArtifacts() {
 }
 
 async function saveFile() {
-  if (!state.selected || state.saveInProgress) return;
+  if (!state.selected || state.saveInProgress) return false;
   if (isTemporaryTab(state.selected)) {
-    await saveTemporaryTab(state.selected);
-    return;
+    return saveTemporaryTab(state.selected);
   }
   try {
     state.saveInProgress = true;
@@ -743,6 +746,7 @@ async function saveFile() {
 
     state.content = content;
     state.tabDrafts[state.selected] = content;
+    state.tabOriginals[state.selected] = content;
     state.status = status;
     await refreshLoadedGroups();
     renderStatus();
@@ -753,9 +757,11 @@ async function saveFile() {
     }
 
     setMessage('Saved', 'ok');
+    return true;
   } catch (error) {
     console.error('Save error:', error);
     setMessage(error.message, 'error');
+    return false;
   } finally {
     state.saveInProgress = false;
     updateEditButton(state.mode === 'edit' ? 'Save' : 'Edit', {
@@ -766,11 +772,11 @@ async function saveFile() {
 }
 
 async function saveTemporaryTab(path) {
-  if (!isTemporaryTab(path) || state.saveInProgress) return;
+  if (!isTemporaryTab(path) || state.saveInProgress) return false;
   if (state.selected !== path) await selectTab(path);
 
   const temporary = state.temporaryTabs.get(path);
-  if (!temporary) return;
+  if (!temporary) return false;
   const input = await showPromptDialog({
     title: 'Save Temporary Tab',
     message: 'Enter a path relative to the project root.',
@@ -779,11 +785,11 @@ async function saveTemporaryTab(path) {
     confirmLabel: 'Save',
     cancelLabel: 'Cancel',
   });
-  if (input === null) return;
+  if (input === null) return false;
   const savePath = resolveCreatePath('', input);
   if (!savePath) {
     setMessage('Path is required', 'error');
-    return;
+    return false;
   }
 
   const editor = $('editor');
@@ -807,8 +813,10 @@ async function saveTemporaryTab(path) {
     state.tabStates[savePath] = state.tabStates[path] || { mode: 'edit' };
     state.tabStates[savePath].mode = 'edit';
     state.tabDrafts[savePath] = content;
+    state.tabOriginals[savePath] = content;
     delete state.tabStates[path];
     delete state.tabDrafts[path];
+    delete state.tabOriginals[path];
     state.temporaryTabs.delete(path);
     state.content = content;
     state.status = status;
@@ -824,8 +832,10 @@ async function saveTemporaryTab(path) {
       editor.setSelectionRange(cursorStart, cursorEnd);
     }
     setMessage('Saved', 'ok');
+    return true;
   } catch (error) {
     setMessage(error.message, 'error');
+    return false;
   } finally {
     state.saveInProgress = false;
     updateEditButton('Save', { disabled: !state.editorReady, primary: true });
@@ -833,6 +843,7 @@ async function saveTemporaryTab(path) {
 }
 
 function renderFullContent(content, filename) {
+  destroyFullViewerFindBar();
   if (isMarkdownFile(filename)) {
     renderMarkdownContent(content, filename);
     return;
@@ -897,6 +908,135 @@ function renderFullContent(content, filename) {
       scrollToLine(parseInt(lineNum.dataset.line, 10));
     });
   });
+  createFullViewerFindBar(content);
+}
+
+function destroyFullViewerFindBar() {
+  if (fullViewerFindBar) {
+    fullViewerFindBar.remove();
+    fullViewerFindBar = null;
+  }
+  $('viewer')?.querySelectorAll('.code-line.full-find-match, .code-line.full-find-current')
+    .forEach((line) => line.classList.remove('full-find-match', 'full-find-current'));
+}
+
+function fullViewerFindMatches(bar) {
+  const query = bar?._mindgitInput?.value.toLocaleLowerCase() || '';
+  if (!query) return [];
+  const lines = String(bar._mindgitContent || '').split('\n');
+  const matches = [];
+  lines.forEach((line, lineIndex) => {
+    const normalized = line.toLocaleLowerCase();
+    let offset = normalized.indexOf(query);
+    while (offset !== -1) {
+      matches.push({ line: lineIndex + 1, column: offset + 1, length: query.length });
+      offset = normalized.indexOf(query, offset + Math.max(1, query.length));
+    }
+  });
+  return matches;
+}
+
+function renderFullViewerFindMatches(bar) {
+  if (!bar) return;
+  const matches = fullViewerFindMatches(bar);
+  const lines = $('viewer')?.querySelectorAll('.code-line') || [];
+  lines.forEach((line) => line.classList.remove('full-find-match', 'full-find-current'));
+  matches.forEach((match) => {
+    $('viewer')?.querySelector(`.code-line[data-line="${match.line}"]`)?.classList.add('full-find-match');
+  });
+  const currentIndex = Math.max(0, Math.min(bar._mindgitCurrentIndex, matches.length - 1));
+  if (matches.length) {
+    const current = matches[currentIndex];
+    $('viewer')?.querySelector(`.code-line[data-line="${current.line}"]`)?.classList.add('full-find-current');
+    bar._mindgitCurrentIndex = currentIndex;
+    bar._mindgitCount.textContent = `${currentIndex + 1}/${matches.length}`;
+  } else {
+    bar._mindgitCurrentIndex = 0;
+    bar._mindgitCount.textContent = '0/0';
+  }
+}
+
+function selectFullViewerMatch(direction, fromStart = false) {
+  const bar = fullViewerFindBar;
+  if (!bar) return;
+  const matches = fullViewerFindMatches(bar);
+  if (!matches.length) {
+    renderFullViewerFindMatches(bar);
+    return;
+  }
+  const current = fromStart ? -1 : bar._mindgitCurrentIndex;
+  bar._mindgitCurrentIndex = (current + direction + matches.length) % matches.length;
+  const match = matches[bar._mindgitCurrentIndex];
+  renderFullViewerFindMatches(bar);
+  scrollToLine(match.line, { column: match.column, length: match.length });
+}
+
+function showFullViewerFindBar() {
+  const bar = fullViewerFindBar;
+  if (!bar) return false;
+  bar.hidden = false;
+  const selected = window.getSelection?.()?.toString() || '';
+  if (selected && !bar._mindgitInput.value) bar._mindgitInput.value = selected;
+  renderFullViewerFindMatches(bar);
+  focusAndSelectField(bar._mindgitInput);
+  return true;
+}
+
+function hideFullViewerFindBar() {
+  if (!fullViewerFindBar) return;
+  fullViewerFindBar.hidden = true;
+  const lines = $('viewer')?.querySelectorAll('.code-line') || [];
+  lines.forEach((line) => line.classList.remove('full-find-match', 'full-find-current', 'highlighted'));
+  $('viewer')?.querySelector('#code-viewer-scroll')?.focus({ preventScroll: true });
+}
+
+function createFullViewerFindBar(content) {
+  const host = $('viewer')?.querySelector('.code-viewer');
+  if (!host) return;
+  const bar = document.createElement('div');
+  bar.className = 'viewer-find-bar';
+  bar.hidden = true;
+  bar.innerHTML = `
+    <input class="viewer-find-input" type="text" placeholder="Find" autocomplete="off" />
+    <span class="viewer-find-count">0/0</span>
+    <button type="button" class="viewer-find-prev" title="Previous match">Prev</button>
+    <button type="button" class="viewer-find-next" title="Next match">Next</button>
+    <button type="button" class="viewer-find-close" title="Close">×</button>`;
+  host.appendChild(bar);
+  fullViewerFindBar = bar;
+  bar._mindgitContent = content;
+  bar._mindgitInput = bar.querySelector('.viewer-find-input');
+  bar._mindgitCount = bar.querySelector('.viewer-find-count');
+  bar._mindgitCurrentIndex = 0;
+  bar._mindgitInput.addEventListener('input', () => {
+    bar._mindgitCurrentIndex = 0;
+    renderFullViewerFindMatches(bar);
+    if (fullViewerFindMatches(bar).length) selectFullViewerMatch(1, true);
+  });
+  bar._mindgitInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      hideFullViewerFindBar();
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      selectFullViewerMatch(event.shiftKey ? -1 : 1);
+    }
+  });
+  bar.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      hideFullViewerFindBar();
+    }
+  });
+  bar.querySelector('.viewer-find-prev').addEventListener('click', () => {
+    selectFullViewerMatch(-1);
+    focusWithoutScroll(bar._mindgitInput);
+  });
+  bar.querySelector('.viewer-find-next').addEventListener('click', () => {
+    selectFullViewerMatch(1);
+    focusWithoutScroll(bar._mindgitInput);
+  });
+  bar.querySelector('.viewer-find-close').addEventListener('click', hideFullViewerFindBar);
 }
 
 function isMarkdownFile(path) {
@@ -1346,6 +1486,7 @@ async function search() {
   try {
     setMessage('Searching...');
     const data = await api(`/api/search?q=${encodeURIComponent(query)}`);
+    if ($('search').value.trim() !== query) return;
     $('search-results').innerHTML = data.results.length ? data.results.map((result) => `
       <button data-search-path="${escapeAttr(result.path)}" data-search-line="${result.line}" data-search-column="${result.column}">
         <div class="where">${escapeHTML(result.path)}:${result.line}:${result.column}</div>

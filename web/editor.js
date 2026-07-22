@@ -272,6 +272,18 @@ function setupEditorShortcuts(editor) {
     clearEditorMeasurementCache(editor);
     clearEditorWrapLayoutCache(editor);
   });
+  editor.addEventListener('compositionstart', () => {
+    editor._mindgitComposing = true;
+  });
+  editor.addEventListener('compositionend', () => {
+    queueMicrotask(() => {
+      editor._mindgitComposing = false;
+      editor._mindgitPendingRemoteContent = null;
+      if (!editor._mindgitApplyingRemote && state.selected) {
+        broadcastEditorContent(state.selected, editor.value);
+      }
+    });
+  });
   const updateSelectionHighlights = () => {
     updateFindBarMatches(findBar);
     renderEditorFindHighlights(findBar);
@@ -303,7 +315,7 @@ function setupEditorShortcuts(editor) {
     syncEditorChrome();
     updateFindBarMatches(findBar);
     renderEditorFindHighlights(findBar);
-    if (!editor._mindgitApplyingRemote && state.selected) {
+    if (!editor._mindgitApplyingRemote && !editor._mindgitComposing && state.selected) {
       broadcastEditorContent(state.selected, content);
     }
   };
@@ -798,6 +810,7 @@ function showEditorFindBar(bar) {
   if (!bar) return;
   hideEditorLineBar(bar._mindgitEditor?._mindgitLineBar, { restoreFocus: false });
   bar.hidden = false;
+  bar._mindgitSuppressedSelection = null;
   const selectedText = getSelectedEditorText(bar._mindgitEditor);
   if (selectedText && !bar._mindgitFindInput.value) {
     bar._mindgitFindInput.value = selectedText;
@@ -809,6 +822,14 @@ function showEditorFindBar(bar) {
 
 function hideEditorFindBar(bar, options = {}) {
   if (!bar) return;
+  const editor = bar._mindgitEditor;
+  if (editor && editor.selectionStart !== editor.selectionEnd) {
+    bar._mindgitSuppressedSelection = {
+      value: editor.value,
+      start: editor.selectionStart,
+      end: editor.selectionEnd,
+    };
+  }
   bar.hidden = true;
   renderEditorFindHighlights(bar);
   if (options.restoreFocus !== false) {
@@ -1128,8 +1149,16 @@ function renderEditorFindHighlights(bar) {
   const selectionMatchOverlay = editor._mindgitSelectionMatchOverlay;
 
   const selectedText = getSelectedEditorText(editor);
-  const useSelection = bar.hidden && selectedText.length > 0;
-  const query = useSelection ? selectedText : bar._mindgitFindInput.value;
+  const suppressedSelection = bar._mindgitSuppressedSelection;
+  const useSelection = bar.hidden
+    && selectedText.length > 0
+    && (!suppressedSelection
+      || suppressedSelection.value !== editor.value
+      || suppressedSelection.start !== editor.selectionStart
+      || suppressedSelection.end !== editor.selectionEnd);
+  const query = bar.hidden
+    ? (useSelection ? selectedText : '')
+    : bar._mindgitFindInput.value;
   const { matches, error } = editorMatches(editor, query, {
     regex: useSelection ? false : isEditorRegexMode(bar),
   });
@@ -1197,6 +1226,14 @@ function restoreEditorCommandState(editor, commandState) {
     findBar._mindgitReplaceInput.value = commandState.find.replace || '';
     setEditorRegexMode(findBar, Boolean(commandState.find.regex));
     findBar.hidden = !commandState.find.open;
+    findBar._mindgitSuppressedSelection = !commandState.find.open
+      && editor.selectionStart !== editor.selectionEnd
+      ? {
+        value: editor.value,
+        start: editor.selectionStart,
+        end: editor.selectionEnd,
+      }
+      : null;
     updateFindBarMatches(findBar);
     renderEditorFindHighlights(findBar);
   }

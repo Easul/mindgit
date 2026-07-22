@@ -294,10 +294,15 @@
         font-size: 17px;
         line-height: 1;
       }
+      .header-icon-button svg {
+        width: 20px;
+        height: 20px;
+      }
       .stat { color: var(--muted); }
       .stat strong { color: var(--text); font-weight: 650; }
       .grow { flex: 1; }
       .search { display: flex; gap: 8px; min-width: 360px; }
+      .search .header-icon-button { font-size: 22px; }
       .search input {
         transition: border-color .14s ease, box-shadow .14s ease, background-color .14s ease;
       }
@@ -1445,6 +1450,7 @@
         background: var(--button);
       }
       .code-viewer {
+        position: relative;
         display: grid;
         grid-template-columns: auto minmax(0, 1fr);
         flex: 1 1 auto;
@@ -1530,6 +1536,48 @@
         bottom: 0;
         width: 3px;
         background: #3b82f6;
+      }
+      .code-line.full-find-match {
+        background: rgba(250, 204, 21, 0.16);
+      }
+      .code-line.full-find-current {
+        background: rgba(59, 130, 246, 0.24);
+        box-shadow: inset 3px 0 0 var(--blue);
+      }
+      .viewer-find-bar {
+        position: absolute;
+        top: 10px;
+        right: 14px;
+        z-index: 8;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: min(520px, calc(100% - 28px));
+        padding: 7px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--panel) 94%, transparent);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, .22);
+        backdrop-filter: blur(8px);
+      }
+      .viewer-find-bar[hidden] { display: none; }
+      .viewer-find-input {
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+      .viewer-find-count {
+        min-width: 42px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+      .viewer-find-bar button {
+        padding: 5px 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--button);
+        color: var(--text);
+        cursor: pointer;
       }
       .hljs { background: transparent !important; padding: 0 !important; }
       .markdown-body {

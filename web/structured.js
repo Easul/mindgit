@@ -41,6 +41,7 @@ async function renderStructuredEdit(path, draftContent = null) {
   }
 
   const content = draftContent ?? (await api(`/api/file?path=${encodeURIComponent(path)}`)).content;
+  if (draftContent === null) rememberTabOriginal(path, content);
   state.content = content;
   if (isDrawioFile(path)) {
     renderDrawioViewer(content, path, true);
