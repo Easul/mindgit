@@ -10,6 +10,7 @@ function getViewerScrollTarget(root = $('viewer')) {
   return root.querySelector('#markdown-viewer-scroll')
     || root.querySelector('#code-viewer-scroll')
     || root.querySelector('#pdf-page-scroll')
+    || root.querySelector('#large-text-viewer')
     || root.querySelector('#viewer > pre')
     || root.querySelector('.image-viewer')
     || null;
@@ -136,9 +137,10 @@ function renderTextEditor(content) {
   state.editorReady = false;
   updateEditButton('Loading...', { disabled: true, primary: true });
   state.content = content;
-  const lineNumbers = renderLineNumberSpans(splitEditorLines(content).length, 'editor-line-num');
+  const largeDocument = isLargeTextDocument(content);
+  const lineNumbers = largeDocument ? '' : renderLineNumberSpans(countTextLines(content), 'editor-line-num');
 
-  $('viewer').innerHTML = `<div class="editor-wrapper">
+  $('viewer').innerHTML = `<div class="editor-wrapper${largeDocument ? ' editor-large-document' : ''}">
     <div class="editor-line-gutter" id="editor-line-gutter">
       <div class="editor-line-numbers" id="editor-line-numbers">${lineNumbers}</div>
     </div>
@@ -844,6 +846,10 @@ async function saveTemporaryTab(path) {
 
 function renderFullContent(content, filename) {
   destroyFullViewerFindBar();
+  if (isLargeTextDocument(content)) {
+    renderLargeTextContent(content);
+    return;
+  }
   if (isMarkdownFile(filename)) {
     renderMarkdownContent(content, filename);
     return;
@@ -909,6 +915,13 @@ function renderFullContent(content, filename) {
     });
   });
   createFullViewerFindBar(content);
+}
+
+function renderLargeTextContent(content) {
+  $('viewer').innerHTML = `<textarea class="large-text-viewer" id="large-text-viewer" readonly spellcheck="false" tabindex="-1"></textarea>`;
+  const viewer = $('large-text-viewer');
+  viewer.value = content;
+  attachScrollableInteractionTarget(viewer);
 }
 
 function destroyFullViewerFindBar() {

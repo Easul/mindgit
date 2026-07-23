@@ -2,6 +2,28 @@ function splitEditorLines(content) {
   return content === '' ? [''] : content.split('\n');
 }
 
+// Large documents need a cheaper rendering path to keep the browser responsive.
+const LARGE_TEXT_DOCUMENT_BYTES = 512 * 1024;
+const LARGE_TEXT_DOCUMENT_LINES = 10000;
+
+function countTextLines(content, limit = Infinity) {
+  if (!content) return 1;
+  let lines = 1;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content.charCodeAt(index) === 10) {
+      lines += 1;
+      if (lines > limit) return lines;
+    }
+  }
+  return lines;
+}
+
+function isLargeTextDocument(content) {
+  const text = String(content || '');
+  return text.length >= LARGE_TEXT_DOCUMENT_BYTES
+    || countTextLines(text, LARGE_TEXT_DOCUMENT_LINES) > LARGE_TEXT_DOCUMENT_LINES;
+}
+
 function renderLineNumberSpans(count, className) {
   return Array.from({length: count}, (_, i) =>
     `<span class="${className}" data-line="${i + 1}">${i + 1}</span>`

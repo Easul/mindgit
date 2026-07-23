@@ -913,6 +913,7 @@ function currentInteractionTarget() {
   }
   return $('markdown-viewer-scroll')
     || $('code-viewer-scroll')
+    || $('large-text-viewer')
     || $('viewer')?.querySelector('pre')
     || $('image-viewer')
     || $('viewer')?.querySelector('.structured-source')

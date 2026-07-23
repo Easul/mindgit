@@ -17,6 +17,7 @@ function setupEditorShortcuts(editor) {
   let undoStack = [createHistoryState()];
   let redoStack = [];
   let lastValue = editor.value;
+  const historyBudget = 8 * 1024 * 1024;
   let isUndoRedo = false;
   let linkModifierActive = false;
   let lastHoverPoint = null;
@@ -83,7 +84,7 @@ function setupEditorShortcuts(editor) {
   }
 
   function refreshEditorLinkHint() {
-    if (!linkModifierActive || !lastHoverPoint) {
+    if (editor.classList.contains('large-document') || !linkModifierActive || !lastHoverPoint) {
       hideEditorLinkHint();
       return;
     }
@@ -133,9 +134,18 @@ function setupEditorShortcuts(editor) {
   function recordHistoryState() {
     if (editor.value === lastValue) return;
     undoStack.push(createHistoryState());
-    if (undoStack.length > 100) undoStack.shift();
+    trimHistory();
     redoStack = [];
     lastValue = editor.value;
+  }
+
+  function trimHistory() {
+    let bytes = undoStack.reduce((total, item) => total + item.value.length * 2, 0);
+    while (undoStack.length > 2 && bytes > historyBudget) {
+      bytes -= undoStack[0].value.length * 2;
+      undoStack.shift();
+    }
+    if (undoStack.length > 100) undoStack.shift();
   }
 
   function resetHistoryState() {
@@ -157,7 +167,7 @@ function setupEditorShortcuts(editor) {
     }
 
     undoStack.push(createHistoryState());
-    if (undoStack.length > 100) undoStack.shift();
+    trimHistory();
     redoStack = [];
   }
 
@@ -302,14 +312,16 @@ function setupEditorShortcuts(editor) {
 
   const updateEditor = () => {
     const content = editor.value;
+    const largeDocument = isLargeTextDocument(content);
+    editor.classList.toggle('large-document', largeDocument);
+    editor.closest('.editor-wrapper')?.classList.toggle('editor-large-document', largeDocument);
     state.content = content;
     if (state.selected && state.mode === 'edit') {
       state.tabDrafts[state.selected] = content;
     }
-    const lineNumbers = renderLineNumberSpans(splitEditorLines(content).length, 'editor-line-num');
     if (lineNumbersEl) {
-      lineNumbersEl.innerHTML = lineNumbers;
-      syncEditorLineNumberLayout(editor, lineNumbersEl, LINE_HEIGHT);
+      lineNumbersEl.innerHTML = largeDocument ? '' : renderLineNumberSpans(countTextLines(content), 'editor-line-num');
+      if (!largeDocument) syncEditorLineNumberLayout(editor, lineNumbersEl, LINE_HEIGHT);
     }
 
     syncEditorChrome();
@@ -1146,6 +1158,12 @@ function renderEditorFindHighlights(bar) {
   const editor = bar?._mindgitEditor;
   const highlight = $('editor-highlight');
   if (!editor || !highlight) return;
+  if (editor.classList.contains('large-document')) {
+    highlight.innerHTML = '';
+    highlight.style.display = 'none';
+    renderEditorSelectionMatchHighlights(editor, editor._mindgitSelectionMatchOverlay, []);
+    return;
+  }
   const selectionMatchOverlay = editor._mindgitSelectionMatchOverlay;
 
   const selectedText = getSelectedEditorText(editor);
@@ -1568,7 +1586,7 @@ function getEditorWrapMeasurementLayer(editor) {
 }
 
 function getEditorWrappedLineLayout(editor, lineHeight = 20) {
-  if (!editor.classList.contains('wrap-enabled')) return null;
+  if (editor.classList.contains('large-document') || !editor.classList.contains('wrap-enabled')) return null;
 
   const style = getComputedStyle(editor);
   const paddingLeft = parseFloat(style.paddingLeft) || 0;

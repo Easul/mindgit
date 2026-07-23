@@ -35,6 +35,7 @@ This document covers the current built-in browser features and keyboard shortcut
 - Pressing `Enter` inserts a newline with the current line indentation.
 - Unsaved edits stay attached to the current tab until you save, close the tab, or reload the page.
 - Word wrap is stored locally and restored on the next visit.
+- Large text files use a lightweight viewer and editor mode. Line numbers, word wrap, and match overlays are disabled above 512 KiB or 10,000 lines to keep the browser responsive.
 
 ## Find and replace
 
