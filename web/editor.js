@@ -22,6 +22,11 @@ function setupEditorShortcuts(editor) {
   let linkModifierActive = false;
   let lastHoverPoint = null;
   let hoveredLinkTarget = null;
+  let lastRenderedLineCount = lineNumbersEl?.childElementCount || 0;
+  let lastLargeDocument = editor.classList.contains('large-document');
+  let editorRenderFrame = 0;
+  let editorChromeFrame = 0;
+  let selectionHighlightFrame = 0;
   const resizeObserver = typeof ResizeObserver === 'function'
     ? new ResizeObserver(() => {
       clearEditorWrapLayoutCache(editor);
@@ -294,9 +299,14 @@ function setupEditorShortcuts(editor) {
       }
     });
   });
-  const updateSelectionHighlights = () => {
+  const flushSelectionHighlights = () => {
+    selectionHighlightFrame = 0;
     updateFindBarMatches(findBar);
     renderEditorFindHighlights(findBar);
+  };
+  const updateSelectionHighlights = () => {
+    if (selectionHighlightFrame) return;
+    selectionHighlightFrame = requestAnimationFrame(flushSelectionHighlights);
   };
   editor.addEventListener('select', updateSelectionHighlights);
   editor.addEventListener('pointerup', updateSelectionHighlights);
@@ -310,36 +320,50 @@ function setupEditorShortcuts(editor) {
     }
   });
 
-  const updateEditor = () => {
+  const renderEditorUpdate = () => {
+    editorRenderFrame = 0;
     const content = editor.value;
     const largeDocument = isLargeTextDocument(content);
     editor.classList.toggle('large-document', largeDocument);
     editor.closest('.editor-wrapper')?.classList.toggle('editor-large-document', largeDocument);
-    state.content = content;
-    if (state.selected && state.mode === 'edit') {
-      state.tabDrafts[state.selected] = content;
-    }
     if (lineNumbersEl) {
-      lineNumbersEl.innerHTML = largeDocument ? '' : renderLineNumberSpans(countTextLines(content), 'editor-line-num');
+      const lineCount = largeDocument ? 0 : countTextLines(content);
+      if (largeDocument !== lastLargeDocument || lineCount !== lastRenderedLineCount) {
+        lineNumbersEl.innerHTML = largeDocument ? '' : renderLineNumberSpans(lineCount, 'editor-line-num');
+        lastLargeDocument = largeDocument;
+        lastRenderedLineCount = lineCount;
+      }
       if (!largeDocument) syncEditorLineNumberLayout(editor, lineNumbersEl, LINE_HEIGHT);
     }
 
     syncEditorChrome();
-    updateFindBarMatches(findBar);
-    renderEditorFindHighlights(findBar);
+    updateSelectionHighlights();
+  };
+
+  const updateEditor = () => {
+    const content = editor.value;
+    state.content = content;
+    if (state.selected && state.mode === 'edit') {
+      state.tabDrafts[state.selected] = content;
+    }
     if (!editor._mindgitApplyingRemote && !editor._mindgitComposing && state.selected) {
       broadcastEditorContent(state.selected, content);
     }
+    if (!editorRenderFrame) editorRenderFrame = requestAnimationFrame(renderEditorUpdate);
   };
 
   editor.addEventListener('scroll', () => {
-    syncEditorChrome();
-    renderEditorFindHighlights(findBar);
-    renderBlockSelection(editor, blockSelectionOverlay, blockSelection, LINE_HEIGHT);
-    if (lineHighlight && lineHighlight.style.display !== 'none') {
-      const cursorLine = getCurrentLine(editor).lineIndex + 1;
-      updateCurrentLineHighlight(cursorLine);
-    }
+    if (editorChromeFrame) return;
+    editorChromeFrame = requestAnimationFrame(() => {
+      editorChromeFrame = 0;
+      syncEditorChrome();
+      renderEditorFindHighlights(findBar);
+      renderBlockSelection(editor, blockSelectionOverlay, blockSelection, LINE_HEIGHT);
+      if (lineHighlight && lineHighlight.style.display !== 'none') {
+        const cursorLine = getCurrentLine(editor).lineIndex + 1;
+        updateCurrentLineHighlight(cursorLine);
+      }
+    });
   });
 
   editor.addEventListener('input', () => {
@@ -383,6 +407,9 @@ function setupEditorShortcuts(editor) {
 
   editor.dataset.mindgitCleanup = 'true';
   editor._mindgitCleanup = () => {
+    cancelAnimationFrame(editorRenderFrame);
+    cancelAnimationFrame(editorChromeFrame);
+    cancelAnimationFrame(selectionHighlightFrame);
     resizeObserver?.disconnect();
     linkHintAbort.abort();
     hideEditorLinkHint();

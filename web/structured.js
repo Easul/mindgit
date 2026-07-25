@@ -17,7 +17,10 @@ function isStructuredFile(path) {
 
 async function renderStructuredFull(path) {
   if (isDrawioFile(path)) {
-    const data = await api(`/api/file?path=${encodeURIComponent(path)}`);
+    const [data] = await Promise.all([
+      api(`/api/file?path=${encodeURIComponent(path)}`),
+      ensureMxGraphAssets(),
+    ]);
     renderDrawioViewer(data.content, path, false);
     return;
   }
@@ -40,7 +43,11 @@ async function renderStructuredEdit(path, draftContent = null) {
     return;
   }
 
-  const content = draftContent ?? (await api(`/api/file?path=${encodeURIComponent(path)}`)).content;
+  const [loadedContent] = await Promise.all([
+    draftContent === null ? api(`/api/file?path=${encodeURIComponent(path)}`) : Promise.resolve(null),
+    isDrawioFile(path) ? ensureMxGraphAssets() : Promise.resolve(true),
+  ]);
+  const content = draftContent ?? loadedContent.content;
   if (draftContent === null) rememberTabOriginal(path, content);
   state.content = content;
   if (isDrawioFile(path)) {

@@ -1,5 +1,53 @@
 let pdfJSImportPromise = null;
 let fullViewerFindBar = null;
+let highlightJSLoadPromise = null;
+const MAX_SYNTAX_HIGHLIGHT_BYTES = 192 * 1024;
+const MAX_SYNTAX_HIGHLIGHT_LINES = 3000;
+
+function ensureHighlightStyles() {
+  const theme = document.documentElement.dataset.theme || 'dark';
+  const styles = [
+    ['hljs-dark', 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css', theme !== 'dark'],
+    ['hljs-light', 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css', theme === 'dark'],
+  ];
+  for (const [id, href, disabled] of styles) {
+    if ($(id)) continue;
+    const link = document.createElement('link');
+    link.id = id;
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.disabled = disabled;
+    document.head.appendChild(link);
+  }
+}
+
+function ensureHighlightJS() {
+  if (typeof hljs !== 'undefined') return Promise.resolve(true);
+  if (!highlightJSLoadPromise) {
+    ensureHighlightStyles();
+    highlightJSLoadPromise = loadScriptOnce(
+      'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js',
+      () => typeof hljs !== 'undefined',
+    ).then(() => true).catch(() => false);
+  }
+  return highlightJSLoadPromise;
+}
+
+function enhanceFullContentHighlight(content, filename) {
+  ensureHighlightJS().then((loaded) => {
+    if (!loaded || state.selected !== filename || state.mode !== 'full' || state.content !== content) return;
+    const scrollTarget = getViewerScrollTarget();
+    const scrollTop = scrollTarget?.scrollTop || 0;
+    const scrollLeft = scrollTarget?.scrollLeft || 0;
+    renderFullContent(content, filename, { loadHighlight: false });
+    requestAnimationFrame(() => {
+      const nextScrollTarget = getViewerScrollTarget();
+      if (!nextScrollTarget) return;
+      nextScrollTarget.scrollTop = scrollTop;
+      nextScrollTarget.scrollLeft = scrollLeft;
+    });
+  });
+}
 
 function updateEditButton(label, options = {}) {
   renderFileTabs();
@@ -844,7 +892,7 @@ async function saveTemporaryTab(path) {
   }
 }
 
-function renderFullContent(content, filename) {
+function renderFullContent(content, filename, options = {}) {
   destroyFullViewerFindBar();
   if (isLargeTextDocument(content)) {
     renderLargeTextContent(content);
@@ -852,6 +900,13 @@ function renderFullContent(content, filename) {
   }
   if (isMarkdownFile(filename)) {
     renderMarkdownContent(content, filename);
+    if (
+      options.loadHighlight !== false
+      && typeof hljs === 'undefined'
+      && content.length <= MAX_SYNTAX_HIGHLIGHT_BYTES
+    ) {
+      enhanceFullContentHighlight(content, filename);
+    }
     return;
   }
 
@@ -866,12 +921,25 @@ function renderFullContent(content, filename) {
     md: 'markdown', sql: 'sql', sh: 'bash', bash: 'bash', zsh: 'bash',
   };
   const language = langMap[ext] || 'plaintext';
+  const syntaxHighlightEnabled = language !== 'plaintext'
+    && typeof hljs !== 'undefined'
+    && content.length <= MAX_SYNTAX_HIGHLIGHT_BYTES
+    && lines.length <= MAX_SYNTAX_HIGHLIGHT_LINES;
+  if (
+    options.loadHighlight !== false
+    && language !== 'plaintext'
+    && typeof hljs === 'undefined'
+    && content.length <= MAX_SYNTAX_HIGHLIGHT_BYTES
+    && lines.length <= MAX_SYNTAX_HIGHLIGHT_LINES
+  ) {
+    enhanceFullContentHighlight(content, filename);
+  }
 
   const highlightedLines = lines.map(line => {
     if (findURLsInText(line).length) {
       return linkifyPlainTextHTML(line || ' ');
     }
-    if (language !== 'plaintext' && typeof hljs !== 'undefined') {
+    if (syntaxHighlightEnabled) {
       try {
         return hljs.highlight(line || ' ', { language, ignoreIllegals: true }).value;
       } catch (e) {

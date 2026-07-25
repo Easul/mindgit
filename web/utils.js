@@ -30,6 +30,41 @@ function renderLineNumberSpans(count, className) {
   ).join('');
 }
 
+const scriptLoadPromises = new Map();
+
+function loadScriptOnce(src, isReady = () => false) {
+  if (isReady()) return Promise.resolve();
+  if (scriptLoadPromises.has(src)) return scriptLoadPromises.get(src);
+
+  const promise = new Promise((resolve, reject) => {
+    const absoluteSrc = new URL(src, window.location.href).href;
+    const existing = [...document.scripts].find((item) => item.src === absoluteSrc);
+    const script = existing || document.createElement('script');
+    const loaded = () => {
+      if (isReady()) resolve();
+      else reject(new Error(`Script did not initialize: ${src}`));
+    };
+    const failed = () => {
+      script.remove();
+      reject(new Error(`Unable to load script: ${src}`));
+    };
+
+    script.addEventListener('load', loaded, { once: true });
+    script.addEventListener('error', failed, { once: true });
+    if (!existing) {
+      script.src = src;
+      script.async = true;
+      document.head.appendChild(script);
+    }
+  }).catch((error) => {
+    scriptLoadPromises.delete(src);
+    throw error;
+  });
+
+  scriptLoadPromises.set(src, promise);
+  return promise;
+}
+
 function getLineStartPositionFromLines(lines, lineNum) {
   let pos = 0;
   for (let i = 0; i < lineNum - 1; i++) {

@@ -1,3 +1,16 @@
+let mxGraphLoadPromise = null;
+
+function ensureMxGraphAssets() {
+  if (typeof mxGraph !== 'undefined' && typeof mxCodec !== 'undefined') return Promise.resolve(true);
+  if (!mxGraphLoadPromise) {
+    mxGraphLoadPromise = loadScriptOnce(
+      '/vendor/mxgraph/mxClient.min.js',
+      () => typeof mxGraph !== 'undefined' && typeof mxCodec !== 'undefined',
+    ).then(() => true).catch(() => false);
+  }
+  return mxGraphLoadPromise;
+}
+
 function renderDrawioViewer(content, path, editable) {
   if (typeof mxGraph === 'undefined' || typeof mxCodec === 'undefined') {
     renderStructuredSourceEditor({

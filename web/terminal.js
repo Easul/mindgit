@@ -9,6 +9,25 @@ const terminalState = {
   height: Number(localStorage.getItem('mindgit-terminal-height')) || 360,
 };
 
+let terminalAssetsPromise = null;
+
+function ensureTerminalAssets() {
+  if (typeof Terminal !== 'undefined' && typeof FitAddon !== 'undefined') return Promise.resolve();
+  if (!terminalAssetsPromise) {
+    terminalAssetsPromise = loadScriptOnce(
+      '/vendor/xterm/xterm.js',
+      () => typeof Terminal !== 'undefined',
+    ).then(() => loadScriptOnce(
+      '/vendor/xterm/xterm-addon-fit.js',
+      () => typeof FitAddon !== 'undefined',
+    )).catch((error) => {
+      terminalAssetsPromise = null;
+      throw error;
+    });
+  }
+  return terminalAssetsPromise;
+}
+
 const terminalKeySequences = {
   escape: '\x1b',
   home: '\x1b[H',
@@ -446,6 +465,12 @@ async function loadTerminalSessions() {
 
 async function openTerminalPanel(options = {}) {
   if (state.embed) return;
+  try {
+    await ensureTerminalAssets();
+  } catch (error) {
+    setMessage(error.message, 'error');
+    return;
+  }
   initializeTerminalPanel();
   const panel = $('terminal-panel');
   panel.hidden = false;
