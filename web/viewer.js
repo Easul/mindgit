@@ -145,7 +145,15 @@ async function renderSelected() {
       return;
     }
 
-    const content = draftContent ?? (await api(`/api/file?path=${encodeURIComponent(state.selected)}`)).content;
+    let content = draftContent;
+    if (content === null) {
+      try {
+        content = (await api(`/api/file?path=${encodeURIComponent(state.selected)}`)).content;
+      } catch (error) {
+        renderTextPreviewError(error);
+        return;
+      }
+    }
     if (draftContent === null) rememberTabOriginal(state.selected, content);
     renderTextEditor(content);
     return;
@@ -168,7 +176,14 @@ async function renderSelected() {
     } else if (isBinary) {
       $('viewer').innerHTML = `<div class="binary-notice"><div><strong>Binary File</strong><p>This file cannot be displayed as text.</p></div></div>`;
     } else {
-      const data = await api(`/api/file?path=${encodeURIComponent(state.selected)}`);
+      let data;
+      try {
+        data = await api(`/api/file?path=${encodeURIComponent(state.selected)}`);
+      } catch (error) {
+        renderTextPreviewError(error);
+        syncViewerHeight();
+        return;
+      }
       rememberTabOriginal(state.selected, data.content);
       state.content = data.content;
       renderFullContent(data.content, state.selected);
@@ -230,6 +245,15 @@ function isLikelyBinary(path) {
     'ttf', 'otf', 'woff', 'woff2', 'eot',
   ];
   return binaryExts.includes(ext);
+}
+
+function renderTextPreviewError(error) {
+  const message = error?.message || 'This file cannot be displayed as text.';
+  const binary = /binary files cannot be previewed/i.test(message);
+  const title = binary ? 'Binary File' : 'Cannot Preview File';
+  $('viewer').innerHTML = `<div class="binary-notice"><div><strong>${title}</strong><p>${escapeHTML(message)}</p></div></div>`;
+  state.editorReady = false;
+  updateEditButton('Edit', { disabled: true });
 }
 
 function fileAPIURL(pathname, path) {
@@ -620,7 +644,7 @@ async function renderPDFViewer(pdfPath) {
 }
 
 function renderImageViewer(imagePath) {
-  const imageUrl = `/api/file?path=${encodeURIComponent(imagePath)}`;
+  const imageUrl = fileAPIURL('/api/file', imagePath);
   $('viewer').innerHTML = `
     <div class="image-viewer" id="image-viewer" tabindex="-1">
       <div class="image-controls">
@@ -1301,11 +1325,11 @@ function renderMarkdownList(lines, startIndex, context) {
 
     let itemClass = '';
     let prefix = '';
-    const taskMatch = itemLines[0].match(/^\[( |x|X)\]\s+(.*)$/);
+    const taskMatch = itemLines[0].match(/^\[( |x|X)?\]\s+(.*)$/);
     if (taskMatch) {
       hasTaskItems = true;
       itemClass = ' class="task-list-item"';
-      prefix = `<input type="checkbox" disabled${taskMatch[1].toLowerCase() === 'x' ? ' checked' : ''}>`;
+      prefix = `<input type="checkbox" disabled${(taskMatch[1] || '').toLowerCase() === 'x' ? ' checked' : ''}>`;
       itemLines[0] = taskMatch[2];
     }
 

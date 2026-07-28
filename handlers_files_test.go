@@ -67,6 +67,45 @@ func TestHandlePDFFileRejectsFilesOverLimit(t *testing.T) {
 	}
 }
 
+func TestHandleReadFileRejectsBinaryContentWithUnknownExtension(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "unknown.data"), []byte{'M', 'G', 0, 1, 2}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	response := newTestResponse()
+	testRequestApp(root).handleReadFile(response, newTestRequest(t, http.MethodGet, "/api/file?path=unknown.data", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "binary files cannot be previewed") {
+		t.Fatalf("unexpected body: %s", response.Body.String())
+	}
+}
+
+func TestHandleReadFileRejectsOversizedTextBeforeReading(t *testing.T) {
+	root := t.TempDir()
+	file, err := os.Create(filepath.Join(root, "large.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxTextPreviewSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	response := newTestResponse()
+	testRequestApp(root).handleReadFile(response, newTestRequest(t, http.MethodGet, "/api/file?path=large.txt", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "text preview is limited to 8 MB") {
+		t.Fatalf("unexpected body: %s", response.Body.String())
+	}
+}
+
 func TestHandleUploadFileWritesAtomically(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "docs"), 0o755); err != nil {

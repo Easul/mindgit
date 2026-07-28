@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,32 @@ func (a App) readProjectFile(path string) ([]byte, error) {
 	}
 	output, err := a.run("cat", "--", path)
 	return []byte(output), err
+}
+
+func (a App) projectFileSize(path string) (int64, error) {
+	if a.sshName == "" {
+		info, err := os.Stat(filepath.Join(a.root, path))
+		if err != nil {
+			return 0, err
+		}
+		if info.IsDir() {
+			return 0, fmt.Errorf("cannot preview directory: %s", path)
+		}
+		return info.Size(), nil
+	}
+	output, err := a.run("wc", "-c", "--", path)
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(output)
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("cannot determine size of %s", path)
+	}
+	size, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("cannot determine size of %s: %w", path, err)
+	}
+	return size, nil
 }
 
 func (a App) listProjectDirectory(path string) ([]projectDirEntry, error) {

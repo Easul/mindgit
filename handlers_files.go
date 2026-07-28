@@ -16,6 +16,10 @@ import (
 
 const maxPDFPreviewSize int64 = 40 << 20
 
+// Keep accidental previews of large or binary files from reading the entire
+// file into memory and serializing it into a JSON response.
+const maxTextPreviewSize int64 = 8 << 20
+
 func (a App) handleStatus(w http.ResponseWriter, r *http.Request) {
 	app, err := a.appForRequest(r)
 	if err != nil {
@@ -54,13 +58,6 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := app.readProjectFile(path)
-	if err != nil {
-		writeJSON(w, nil, err)
-		return
-	}
-
-	// Check if it's an image file - return binary data directly
 	ext := strings.ToLower(filepath.Ext(path))
 	imageExts := map[string]string{
 		".png":  "image/png",
@@ -74,9 +71,34 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if mimeType, isImage := imageExts[ext]; isImage {
+		content, err := app.readProjectFile(path)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
 		w.Header().Set("Content-Type", mimeType)
 		w.WriteHeader(http.StatusOK)
 		w.Write(content)
+		return
+	}
+
+	fileSize, err := app.projectFileSize(path)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if fileSize > maxTextPreviewSize {
+		writeJSON(w, nil, fmt.Errorf("text preview is limited to 8 MB; this file is %.1f MB", float64(fileSize)/(1<<20)))
+		return
+	}
+
+	content, err := app.readProjectFile(path)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if isBinary(content) {
+		writeJSON(w, nil, fmt.Errorf("binary files cannot be previewed as text"))
 		return
 	}
 
