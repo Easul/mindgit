@@ -1325,16 +1325,19 @@ function renderMarkdownList(lines, startIndex, context) {
 
     let itemClass = '';
     let prefix = '';
+    let isTaskItem = false;
     const taskMatch = itemLines[0].match(/^\[( |x|X)?\]\s+(.*)$/);
     if (taskMatch) {
       hasTaskItems = true;
+      isTaskItem = true;
       itemClass = ' class="task-list-item"';
       prefix = `<input type="checkbox" disabled${(taskMatch[1] || '').toLowerCase() === 'x' ? ' checked' : ''}>`;
       itemLines[0] = taskMatch[2];
     }
 
     const itemHTML = unwrapMarkdownListItem(renderMarkdownBlocks(itemLines, context));
-    items.push(`<li${itemClass}>${prefix}${itemHTML}</li>`);
+    const body = isTaskItem ? `<span class="task-list-item-text">${itemHTML}</span>` : itemHTML;
+    items.push(`<li${itemClass}>${prefix}${body}</li>`);
   }
 
   const listClass = hasTaskItems ? ' class="contains-task-list"' : '';

@@ -1684,6 +1684,10 @@
         appearance: auto;
         flex: 0 0 auto;
       }
+      .markdown-body .task-list-item .task-list-item-text {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
       .markdown-body blockquote {
         margin-left: 0;
         padding: 0 0 0 16px;
