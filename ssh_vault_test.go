@@ -70,10 +70,13 @@ func TestBuildSSHTerminalCommandUsesOnlyRequiredKeys(t *testing.T) {
 	if !strings.Contains(text, "ControlMaster auto") || !strings.Contains(text, "ControlPersist 600") || !strings.Contains(text, "ControlPath") {
 		t.Fatalf("SSH config missing connection reuse settings: %s", text)
 	}
+	if !strings.Contains(text, "ConnectTimeout 10") || !strings.Contains(text, "ConnectionAttempts 1") {
+		t.Fatalf("SSH config missing bounded connection settings: %s", text)
+	}
 	if strings.Contains(text, "unused.example.com") || strings.Contains(text, "missing.key") {
 		t.Fatalf("SSH config included unrelated connection: %s", text)
 	}
-	if got := command.Args[len(command.Args)-1]; got != `cd -- '/srv/app with space' && exec "${SHELL:-/bin/sh}" -l` {
+	if got := command.Args[len(command.Args)-1]; got != `cd -- '/srv/app with space' && exec "${SHELL:-/bin/sh}"` {
 		t.Fatalf("remote command = %q", got)
 	}
 	temporaryDir := filepath.Dir(configPath)

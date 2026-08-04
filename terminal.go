@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 )
 
 const terminalBufferLimit = 1024 * 1024
+const terminalStartupWarningAfter = 5 * time.Second
 
 type TerminalManager struct {
 	mu       sync.Mutex
@@ -49,6 +51,7 @@ type TerminalSession struct {
 	connections map[*webSocketConn]struct{}
 	closed      bool
 	exitMessage string
+	firstOutput time.Time
 }
 
 type TerminalSummary struct {
@@ -107,6 +110,7 @@ func (a App) handleDeleteTerminal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a App) handleTerminal(w http.ResponseWriter, r *http.Request) {
+	requestedAt := time.Now()
 	if !isWebSocketUpgrade(r) {
 		http.Error(w, "websocket upgrade required", http.StatusUpgradeRequired)
 		return
@@ -118,6 +122,9 @@ func (a App) handleTerminal(w http.ResponseWriter, r *http.Request) {
 
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	var session *TerminalSession
+	var project ProjectSummary
+	var sshName string
+	var vaultKey []byte
 	var err error
 	if id != "" {
 		session = a.terminals.get(id)
@@ -126,34 +133,40 @@ func (a App) handleTerminal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		sshName := strings.TrimSpace(r.URL.Query().Get("ssh"))
+		sshName = strings.TrimSpace(r.URL.Query().Get("ssh"))
 		if sshName != "" {
-			vaultKey, ok := a.auth.vaultKey(r)
+			var ok bool
+			vaultKey, ok = a.auth.vaultKey(r)
 			if !ok {
 				http.Error(w, "SSH key vault is locked", http.StatusUnauthorized)
 				return
 			}
-			session, err = a.terminals.createSSH(a.ssh, sshName, vaultKey)
 		} else {
 			app, appErr := a.appForRequest(r)
 			if appErr != nil {
 				http.Error(w, appErr.Error(), http.StatusBadRequest)
 				return
 			}
-			session, err = a.terminals.create(app.currentProject())
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			project = app.currentProject()
 		}
 	}
 
 	connection, err := upgradeWebSocket(w, r)
 	if err != nil {
-		if id == "" {
-			a.terminals.remove(session.id)
-		}
 		return
+	}
+	if session == nil {
+		if sshName != "" {
+			session, err = a.terminals.createSSH(a.ssh, sshName, vaultKey)
+		} else {
+			session, err = a.terminals.create(project)
+		}
+		if err != nil {
+			_ = connection.writeJSON(terminalServerMessage{Type: "error", Message: err.Error()})
+			connection.close()
+			return
+		}
+		log.Printf("terminal id=%s kind=%s created in %s", session.id, session.kind(), terminalElapsed(requestedAt))
 	}
 	session.serve(connection)
 }
@@ -193,6 +206,7 @@ func (m *TerminalManager) createSSH(config SSHConfig, name string, vaultKey []by
 
 	go session.readOutput()
 	go session.wait()
+	go session.warnIfStartupIsSlow()
 	return session, nil
 }
 
@@ -220,6 +234,7 @@ func (m *TerminalManager) create(project ProjectSummary) (*TerminalSession, erro
 
 	go session.readOutput()
 	go session.wait()
+	go session.warnIfStartupIsSlow()
 	return session, nil
 }
 
@@ -370,6 +385,7 @@ func (s *TerminalSession) attach(connection *webSocketConn) {
 		_ = connection.writeJSON(terminalServerMessage{Type: "exit", Message: s.exitMessage})
 	}
 	s.connections[connection] = struct{}{}
+	log.Printf("terminal id=%s kind=%s browser attached after %s", s.id, s.kind(), terminalElapsed(s.startedAt))
 }
 
 func (s *TerminalSession) detach(connection *webSocketConn) {
@@ -383,6 +399,7 @@ func (s *TerminalSession) readOutput() {
 	for {
 		count, err := s.master.Read(buffer)
 		if count > 0 {
+			s.recordFirstOutput()
 			s.broadcast(buffer[:count])
 		}
 		if err != nil {
@@ -422,10 +439,47 @@ func (s *TerminalSession) wait() {
 		connections = append(connections, connection)
 	}
 	s.mu.Unlock()
+	log.Printf("terminal id=%s kind=%s exited after %s: %s", s.id, s.kind(), terminalElapsed(s.startedAt), message)
 	for _, connection := range connections {
 		_ = connection.writeJSON(terminalServerMessage{Type: "exit", Message: message})
 	}
 	s.cleanupResources()
+}
+
+func (s *TerminalSession) recordFirstOutput() {
+	s.mu.Lock()
+	if s.firstOutput.IsZero() {
+		s.firstOutput = time.Now()
+		log.Printf("terminal id=%s kind=%s first PTY output after %s", s.id, s.kind(), terminalElapsed(s.startedAt))
+	}
+	s.mu.Unlock()
+}
+
+func (s *TerminalSession) warnIfStartupIsSlow() {
+	timer := time.NewTimer(terminalStartupWarningAfter)
+	defer timer.Stop()
+	<-timer.C
+
+	s.mu.Lock()
+	noOutput := s.firstOutput.IsZero() && !s.closed
+	s.mu.Unlock()
+	if noOutput {
+		log.Printf("terminal id=%s kind=%s has no PTY output after %s; check SSH reachability or shell startup files", s.id, s.kind(), terminalStartupWarningAfter)
+	}
+}
+
+func (s *TerminalSession) kind() string {
+	if s.sshName != "" {
+		return "ssh"
+	}
+	return "local"
+}
+
+func terminalElapsed(startedAt time.Time) time.Duration {
+	if startedAt.IsZero() {
+		return 0
+	}
+	return time.Since(startedAt).Round(time.Millisecond)
 }
 
 func (s *TerminalSession) close() {

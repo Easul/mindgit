@@ -6,10 +6,16 @@ const terminalState = {
   ctrl: false,
   alt: false,
   selecting: false,
+  sessionsPromise: null,
   height: Number(localStorage.getItem('mindgit-terminal-height')) || 360,
 };
 
 let terminalAssetsPromise = null;
+
+function logTerminalTiming(stage, startedAt) {
+  const elapsed = Math.round(performance.now() - startedAt);
+  console.info(`[MindGit terminal] ${stage} after ${elapsed} ms`);
+}
 
 function ensureTerminalAssets() {
   if (typeof Terminal !== 'undefined' && typeof FitAddon !== 'undefined') return Promise.resolve();
@@ -115,6 +121,7 @@ function createTerminalClient(summary = null, options = {}) {
     reconnectTimer: 0,
     ready: false,
     closed: Boolean(summary?.closed),
+    firstOutput: false,
     ime: { composing: false, recoveryTimer: 0 },
   };
   terminalState.clients.set(temporaryId, client);
@@ -152,16 +159,22 @@ function configureTerminalScrollbar(host) {
 
 function connectTerminal(client, existingId) {
   if (client.disposed) return;
+  const startedAt = performance.now();
   const socket = new WebSocket(terminalWebSocketURL(client, existingId));
   socket.binaryType = 'arraybuffer';
   client.socket = socket;
   client.ready = false;
 
   socket.addEventListener('open', () => {
+    logTerminalTiming('WebSocket opened', startedAt);
     if (existingId) client.terminal.reset();
   });
   socket.addEventListener('message', (event) => {
     if (typeof event.data !== 'string') {
+      if (!client.firstOutput) {
+        client.firstOutput = true;
+        logTerminalTiming('first terminal output received', startedAt);
+      }
       client.terminal.write(new Uint8Array(event.data));
       return;
     }
@@ -174,6 +187,7 @@ function connectTerminal(client, existingId) {
       client.project = message.project;
       client.ready = true;
       client.closed = false;
+      logTerminalTiming('terminal ready', startedAt);
       client.host.dataset.terminalId = client.id;
       if (previousId !== client.id) {
         terminalState.clients.delete(previousId);
@@ -185,6 +199,10 @@ function connectTerminal(client, existingId) {
     } else if (message.type === 'exit') {
       client.closed = true;
       window.setTimeout(() => closeTerminal(client.id), 0);
+    } else if (message.type === 'error') {
+      client.closed = true;
+      client.terminal.writeln(`\r\n\x1b[31m${message.message || 'Unable to start terminal.'}\x1b[0m`);
+      window.setTimeout(() => closeTerminal(client.id), 0);
     }
   });
   socket.addEventListener('close', () => {
@@ -194,6 +212,7 @@ function connectTerminal(client, existingId) {
     client.reconnectTimer = window.setTimeout(() => connectTerminal(client, client.id), 1000);
   });
   socket.addEventListener('error', () => {
+    console.warn('[MindGit terminal] WebSocket error');
     if (!existingId) {
       client.terminal.writeln('\r\n\x1b[31mUnable to start terminal.\x1b[0m');
     }
@@ -451,31 +470,48 @@ async function closeTerminal(id) {
   else hideTerminalPanel();
 }
 
+function fetchTerminalSessions() {
+  if (terminalState.loaded) return Promise.resolve([]);
+  if (terminalState.sessionsPromise) return terminalState.sessionsPromise;
+  terminalState.sessionsPromise = fetch('/api/terminals', { cache: 'no-store' })
+    .then(async (response) => {
+      const sessions = await response.json();
+      return response.ok && Array.isArray(sessions) ? sessions : [];
+    })
+    .catch(() => [])
+    .finally(() => {
+      terminalState.loaded = true;
+    });
+  return terminalState.sessionsPromise;
+}
+
 async function loadTerminalSessions() {
-  if (terminalState.loaded) return;
-  terminalState.loaded = true;
-  try {
-    const response = await fetch('/api/terminals', { cache: 'no-store' });
-    const sessions = await response.json();
-    if (response.ok && Array.isArray(sessions)) {
-      for (const summary of sessions) createTerminalClient(summary);
-    }
-  } catch {}
+  const sessions = await fetchTerminalSessions();
+  if (terminalState.clients.size) return;
+  for (const summary of sessions) createTerminalClient(summary);
 }
 
 async function openTerminalPanel(options = {}) {
   if (state.embed) return;
-  try {
-    await ensureTerminalAssets();
-  } catch (error) {
-    setMessage(error.message, 'error');
-    return;
-  }
+  const startedAt = performance.now();
   initializeTerminalPanel();
   const panel = $('terminal-panel');
   panel.hidden = false;
   document.documentElement.dataset.terminalOpen = 'true';
   applyTerminalHeight();
+  const assets = ensureTerminalAssets().then(() => logTerminalTiming('xterm assets ready', startedAt));
+  const sessions = fetchTerminalSessions().then((result) => {
+    logTerminalTiming('terminal session list loaded', startedAt);
+    return result;
+  });
+  try {
+    await assets;
+  } catch (error) {
+    hideTerminalPanel();
+    setMessage(error.message, 'error');
+    return;
+  }
+  await sessions;
   await loadTerminalSessions();
   let active = null;
   if (!options.newTab && !options.sshName) {

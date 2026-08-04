@@ -122,6 +122,8 @@ func buildSSHTerminalCommand(config SSHConfig, target SSHConnectionConfig, vault
 		builder.WriteString("  User " + sshConfigValue(connection.User) + "\n")
 		builder.WriteString("  Port " + strconv.Itoa(normalizedSSHPort(connection.Port)) + "\n")
 		builder.WriteString("  IdentitiesOnly yes\n")
+		builder.WriteString("  ConnectTimeout 10\n")
+		builder.WriteString("  ConnectionAttempts 1\n")
 		builder.WriteString("  StrictHostKeyChecking accept-new\n")
 		builder.WriteString("  UserKnownHostsFile " + sshConfigValue(config.KnownHosts) + "\n")
 		if connection.Name == target.Name && target.ForcePTY {
@@ -169,7 +171,9 @@ func buildSSHTerminalCommand(config SSHConfig, target SSHConnectionConfig, vault
 		cleanup()
 		return nil, nil, fmt.Errorf("unknown SSH connection: %s", target.Name)
 	}
-	remoteCommand := "cd -- " + shellQuote(defaultSSHPath(target)) + " && exec \"${SHELL:-/bin/sh}\" -l"
+	// A PTY makes the shell interactive. Avoid a login shell here because its
+	// profile often repeats slow setup already covered by interactive shell config.
+	remoteCommand := "cd -- " + shellQuote(defaultSSHPath(target)) + " && exec \"${SHELL:-/bin/sh}\""
 	command := exec.Command("ssh", "-F", configPath, "-tt", alias, remoteCommand)
 	command.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	return command, cleanup, nil
