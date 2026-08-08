@@ -74,6 +74,7 @@ func runApplication(args []string) error {
 	mux.HandleFunc("GET /api/xmind", app.handleXMindFile)
 	mux.HandleFunc("POST /api/file", app.handleSaveFile)
 	mux.HandleFunc("POST /api/upload", app.handleUploadFile)
+	mux.HandleFunc("GET /api/fs", app.handleOpenFile)
 	mux.HandleFunc("POST /api/fs", app.handleCreatePath)
 	mux.HandleFunc("PATCH /api/fs", app.handleRenamePath)
 	mux.HandleFunc("DELETE /api/fs", app.handleDeletePath)

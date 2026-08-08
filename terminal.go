@@ -28,9 +28,10 @@ const terminalBufferLimit = 1024 * 1024
 const terminalStartupWarningAfter = 5 * time.Second
 
 type TerminalManager struct {
-	mu       sync.Mutex
-	sessions map[string]*TerminalSession
-	next     int
+	mu         sync.Mutex
+	creationMu sync.Mutex
+	sessions   map[string]*TerminalSession
+	next       int
 }
 
 type TerminalSession struct {
@@ -156,19 +157,63 @@ func (a App) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if session == nil {
+		forceNew := r.URL.Query().Get("new") == "1"
 		if sshName != "" {
-			session, err = a.terminals.createSSH(a.ssh, sshName, vaultKey)
+			session, err = a.terminals.openSSH(a.ssh, sshName, vaultKey, !forceNew)
 		} else {
-			session, err = a.terminals.create(project)
+			session, err = a.terminals.open(project, !forceNew)
 		}
 		if err != nil {
 			_ = connection.writeJSON(terminalServerMessage{Type: "error", Message: err.Error()})
 			connection.close()
 			return
 		}
-		log.Printf("terminal id=%s kind=%s created in %s", session.id, session.kind(), terminalElapsed(requestedAt))
+		log.Printf("terminal id=%s kind=%s opened in %s", session.id, session.kind(), terminalElapsed(requestedAt))
 	}
 	session.serve(connection)
+}
+
+func (m *TerminalManager) open(project ProjectSummary, reuse bool) (*TerminalSession, error) {
+	m.creationMu.Lock()
+	defer m.creationMu.Unlock()
+	if reuse {
+		if session := m.reusable(project.Key, ""); session != nil {
+			return session, nil
+		}
+	}
+	return m.create(project)
+}
+
+func (m *TerminalManager) openSSH(config SSHConfig, name string, vaultKey []byte, reuse bool) (*TerminalSession, error) {
+	m.creationMu.Lock()
+	defer m.creationMu.Unlock()
+	if reuse {
+		if session := m.reusable("ssh:"+name, name); session != nil {
+			return session, nil
+		}
+	}
+	return m.createSSH(config, name, vaultKey)
+}
+
+func (m *TerminalManager) reusable(projectKey, sshName string) *TerminalSession {
+	m.mu.Lock()
+	sessions := make([]*TerminalSession, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	m.mu.Unlock()
+
+	var latest *TerminalSession
+	for _, session := range sessions {
+		session.mu.Lock()
+		matches := !session.closed && session.projectKey == projectKey && session.sshName == sshName
+		startedAt := session.startedAt
+		session.mu.Unlock()
+		if matches && (latest == nil || startedAt.After(latest.startedAt)) {
+			latest = session
+		}
+	}
+	return latest
 }
 
 func (m *TerminalManager) createSSH(config SSHConfig, name string, vaultKey []byte) (*TerminalSession, error) {

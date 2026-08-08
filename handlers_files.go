@@ -52,7 +52,8 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
-	path, err := app.cleanPath(r.URL.Query().Get("path"))
+	external := r.URL.Query().Get("external") == "1"
+	path, err := app.resolveRequestedFilePath(r.URL.Query().Get("path"), external)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -71,7 +72,7 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if mimeType, isImage := imageExts[ext]; isImage {
-		content, err := app.readProjectFile(path)
+		content, err := app.readRequestedFile(path, external)
 		if err != nil {
 			writeJSON(w, nil, err)
 			return
@@ -82,7 +83,7 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileSize, err := app.projectFileSize(path)
+	fileSize, err := app.requestedFileSize(path, external)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -92,7 +93,7 @@ func (a App) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := app.readProjectFile(path)
+	content, err := app.readRequestedFile(path, external)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -112,13 +113,14 @@ func (a App) handleDownload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
-	path, err := app.cleanPath(r.URL.Query().Get("path"))
+	external := r.URL.Query().Get("external") == "1"
+	path, err := app.resolveRequestedFilePath(r.URL.Query().Get("path"), external)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 	if app.sshName != "" {
-		content, err := app.readProjectFile(path)
+		content, err := app.readRequestedFile(path, external)
 		if err != nil {
 			writeJSON(w, nil, err)
 			return
@@ -133,7 +135,10 @@ func (a App) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath := filepath.Join(app.root, path)
+	fullPath := path
+	if !external {
+		fullPath = filepath.Join(app.root, path)
+	}
 	file, err := os.Open(fullPath)
 	if err != nil {
 		writeJSON(w, nil, err)
@@ -175,7 +180,8 @@ func (a App) handlePDFFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
-	path, err := app.cleanPath(r.URL.Query().Get("path"))
+	external := r.URL.Query().Get("external") == "1"
+	path, err := app.resolveRequestedFilePath(r.URL.Query().Get("path"), external)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -185,7 +191,7 @@ func (a App) handlePDFFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if app.sshName != "" {
-		content, err := app.readProjectFile(path)
+		content, err := app.readRequestedFile(path, external)
 		if err != nil {
 			writeJSON(w, nil, err)
 			return
@@ -200,7 +206,11 @@ func (a App) handlePDFFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, err := os.Open(filepath.Join(app.root, path))
+	fullPath := path
+	if !external {
+		fullPath = filepath.Join(app.root, path)
+	}
+	file, err := os.Open(fullPath)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -325,6 +335,20 @@ func (a App) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, UploadResponse{Path: filepath.ToSlash(relativePath), Size: written}, nil)
 }
 
+func (a App) handleOpenFile(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	file, err := app.resolveOpenFilePath(r.URL.Query().Get("path"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, file, nil)
+}
+
 func writeUploadError(w http.ResponseWriter, status int, err error) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -349,9 +373,34 @@ func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := app.cleanPath(req.Path)
+	external := r.URL.Query().Get("external") == "1"
+	path, err := app.resolveRequestedFilePath(req.Path, external)
 	if err != nil {
 		writeJSON(w, nil, err)
+		return
+	}
+	var access OpenFileResponse
+	if !req.Create {
+		access, err = app.resolveOpenFilePath(req.Path)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if !access.Writable {
+			writeJSON(w, nil, errors.New("file is read-only"))
+			return
+		}
+	}
+	if external {
+		if req.Create {
+			writeJSON(w, nil, errors.New("external files must already exist"))
+			return
+		}
+		if err := app.writeRequestedFile(path, []byte(req.Content), true); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		writeJSON(w, access, nil)
 		return
 	}
 	if isGitPath(path) {

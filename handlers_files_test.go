@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,6 +105,65 @@ func TestHandleReadFileRejectsOversizedTextBeforeReading(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), "text preview is limited to 8 MB") {
 		t.Fatalf("unexpected body: %s", response.Body.String())
+	}
+}
+
+func TestExternalFileOpenReadAndSave(t *testing.T) {
+	root := t.TempDir()
+	externalPath := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(externalPath, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := testRequestApp(root)
+	encodedPath := url.QueryEscape(externalPath)
+
+	openResponse := newTestResponse()
+	app.handleOpenFile(openResponse, newTestRequest(t, http.MethodGet, "/api/fs?path="+encodedPath, nil))
+	if openResponse.Code != http.StatusOK {
+		t.Fatalf("open status = %d; body=%s", openResponse.Code, openResponse.Body.String())
+	}
+	var opened OpenFileResponse
+	if err := json.NewDecoder(&openResponse.Body).Decode(&opened); err != nil {
+		t.Fatal(err)
+	}
+	if !opened.External || opened.Path != externalPath || !opened.Writable {
+		t.Fatalf("opened = %#v", opened)
+	}
+
+	readResponse := newTestResponse()
+	app.handleReadFile(readResponse, newTestRequest(t, http.MethodGet, "/api/file?external=1&path="+encodedPath, nil))
+	if readResponse.Code != http.StatusOK || !strings.Contains(readResponse.Body.String(), "outside") {
+		t.Fatalf("read status = %d; body=%s", readResponse.Code, readResponse.Body.String())
+	}
+
+	saveResponse := newTestResponse()
+	body := strings.NewReader(fmt.Sprintf(`{"path":%q,"content":"updated"}`, externalPath))
+	app.handleSaveFile(saveResponse, newTestRequest(t, http.MethodPost, "/api/file?external=1", body))
+	if saveResponse.Code != http.StatusOK {
+		t.Fatalf("save status = %d; body=%s", saveResponse.Code, saveResponse.Body.String())
+	}
+	content, err := os.ReadFile(externalPath)
+	if err != nil || string(content) != "updated" {
+		t.Fatalf("saved content = %q, %v", content, err)
+	}
+}
+
+func TestExternalReadOnlyFileCannotBeSaved(t *testing.T) {
+	root := t.TempDir()
+	externalPath := filepath.Join(t.TempDir(), "readonly.txt")
+	if err := os.WriteFile(externalPath, []byte("readonly"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	app := testRequestApp(root)
+	body := strings.NewReader(fmt.Sprintf(`{"path":%q,"content":"changed"}`, externalPath))
+	response := newTestResponse()
+	app.handleSaveFile(response, newTestRequest(t, http.MethodPost, "/api/file?external=1", body))
+	if response.Code == http.StatusOK || !strings.Contains(response.Body.String(), "read-only") {
+		t.Fatalf("save status = %d; body=%s", response.Code, response.Body.String())
+	}
+	content, err := os.ReadFile(externalPath)
+	if err != nil || string(content) != "readonly" {
+		t.Fatalf("read-only content = %q, %v", content, err)
 	}
 }
 

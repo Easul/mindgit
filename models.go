@@ -37,6 +37,12 @@ type FileResponse struct {
 	Content string `json:"content"`
 }
 
+type OpenFileResponse struct {
+	Path     string `json:"path"`
+	External bool   `json:"external"`
+	Writable bool   `json:"writable"`
+}
+
 type SaveRequest struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`

@@ -18,19 +18,19 @@ function isStructuredFile(path) {
 async function renderStructuredFull(path) {
   if (isDrawioFile(path)) {
     const [data] = await Promise.all([
-      api(`/api/file?path=${encodeURIComponent(path)}`),
+      api(fileRequestPath('/api/file', path)),
       ensureMxGraphAssets(),
     ]);
     renderDrawioViewer(data.content, path, false);
     return;
   }
   if (isKmFile(path)) {
-    const data = await api(`/api/file?path=${encodeURIComponent(path)}`);
+    const data = await api(fileRequestPath('/api/file', path));
     renderKmViewer(data.content, path, false);
     return;
   }
   if (isXmindFile(path)) {
-    const data = await api(`/api/xmind?path=${encodeURIComponent(path)}`);
+    const data = await api(fileRequestPath('/api/xmind', path));
     renderXmindViewer(data.content, path);
   }
 }
@@ -44,7 +44,7 @@ async function renderStructuredEdit(path, draftContent = null) {
   }
 
   const [loadedContent] = await Promise.all([
-    draftContent === null ? api(`/api/file?path=${encodeURIComponent(path)}`) : Promise.resolve(null),
+    draftContent === null ? api(fileRequestPath('/api/file', path)) : Promise.resolve(null),
     isDrawioFile(path) ? ensureMxGraphAssets() : Promise.resolve(true),
   ]);
   const content = draftContent ?? loadedContent.content;

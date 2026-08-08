@@ -21,6 +21,17 @@ func (a App) readProjectFile(path string) ([]byte, error) {
 	return []byte(output), err
 }
 
+func (a App) readRequestedFile(path string, external bool) ([]byte, error) {
+	if external {
+		if a.sshName != "" {
+			output, err := a.run("cat", "--", path)
+			return []byte(output), err
+		}
+		return os.ReadFile(path)
+	}
+	return a.readProjectFile(path)
+}
+
 func (a App) projectFileSize(path string) (int64, error) {
 	if a.sshName == "" {
 		info, err := os.Stat(filepath.Join(a.root, path))
@@ -45,6 +56,50 @@ func (a App) projectFileSize(path string) (int64, error) {
 		return 0, fmt.Errorf("cannot determine size of %s: %w", path, err)
 	}
 	return size, nil
+}
+
+func (a App) requestedFileSize(path string, external bool) (int64, error) {
+	if !external {
+		return a.projectFileSize(path)
+	}
+	if a.sshName != "" {
+		return a.projectFileSize(path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("cannot preview non-regular file: %s", path)
+	}
+	return info.Size(), nil
+}
+
+func (a App) writeRequestedFile(path string, content []byte, external bool) error {
+	if !external {
+		return a.writeProjectFile(path, content, false)
+	}
+	if a.sshName != "" {
+		return a.writeProjectFile(path, content, false)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = file.Close()
+		}
+	}()
+	if _, err := file.Write(content); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (a App) listProjectDirectory(path string) ([]projectDirEntry, error) {

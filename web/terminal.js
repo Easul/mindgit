@@ -82,6 +82,7 @@ function terminalWebSocketURL(client, id = '') {
   } else if (state.currentProjectKey) {
     url.searchParams.set('project', state.currentProjectKey);
   }
+  if (!id && client?.forceNew) url.searchParams.set('new', '1');
   return url.toString();
 }
 
@@ -112,6 +113,7 @@ function createTerminalClient(summary = null, options = {}) {
     projectKey: summary?.projectKey || state.currentProjectKey,
     project: summary?.project || currentProject()?.name || '',
     sshName: summary?.sshName || options.sshName || '',
+    forceNew: Boolean(options.forceNew),
     terminal,
     fit,
     host,
@@ -519,7 +521,12 @@ async function openTerminalPanel(options = {}) {
       client.projectKey === state.currentProjectKey && !client.closed
     ));
   }
-  if (!active) active = createTerminalClient(null, { sshName: options.sshName || '' });
+  if (!active) {
+    active = createTerminalClient(null, {
+      sshName: options.sshName || '',
+      forceNew: Boolean(options.newTab),
+    });
+  }
   if (active) activateTerminal(active.id);
 }
 

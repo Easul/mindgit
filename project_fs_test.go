@@ -100,4 +100,22 @@ exec sh -c "$last"
 	if _, err := os.Stat(filepath.Join(root, "docs", "renamed.txt")); !os.IsNotExist(err) {
 		t.Fatalf("remote delete did not remove file: %v", err)
 	}
+	externalPath := filepath.Join(t.TempDir(), "external.txt")
+	if err := os.WriteFile(externalPath, []byte("external\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := app.resolveOpenFilePath(externalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opened.External || opened.Path != externalPath || !opened.Writable {
+		t.Fatalf("remote external file = %#v", opened)
+	}
+	externalContent, err := app.readRequestedFile(externalPath, true)
+	if err != nil || string(externalContent) != "external\n" {
+		t.Fatalf("read remote external file: %q, %v", externalContent, err)
+	}
+	if err := app.writeRequestedFile(externalPath, []byte("updated external\n"), true); err != nil {
+		t.Fatal(err)
+	}
 }

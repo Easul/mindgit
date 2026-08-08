@@ -11,9 +11,49 @@ function systemThemePreference() {
 
 const initialParams = new URLSearchParams(window.location.search);
 const temporaryTabPrefix = 'mindgit-temporary:';
+const externalTabPrefix = 'mindgit-external:';
 
 function isTemporaryTab(path) {
   return typeof path === 'string' && path.startsWith(temporaryTabPrefix);
+}
+
+function isExternalTab(path) {
+  return typeof path === 'string' && path.startsWith(externalTabPrefix);
+}
+
+function externalTabPath(path) {
+  return isExternalTab(path) ? path.slice(externalTabPrefix.length) : path;
+}
+
+function externalTabId(path) {
+  return `${externalTabPrefix}${path}`;
+}
+
+function filePathForTab(path) {
+  return isExternalTab(path) ? externalTabPath(path) : path;
+}
+
+function fileRequestPath(pathname, tabPath) {
+  const url = new URL(pathname, window.location.origin);
+  url.searchParams.set('path', filePathForTab(tabPath));
+  if (isExternalTab(tabPath)) url.searchParams.set('external', '1');
+  return `${url.pathname}${url.search}`;
+}
+
+function tabIsWritable(path) {
+  return state.fileAccess.get(path)?.writable !== false;
+}
+
+async function ensureFileInfo(path) {
+  if (!path || isTemporaryTab(path)) return null;
+  const existing = state.fileAccess.get(path);
+  if (existing) return existing;
+  const result = await api(`/api/fs?path=${encodeURIComponent(filePathForTab(path))}`);
+  const info = isExternalTab(path)
+    ? { ...result, path: externalTabPath(path), external: true }
+    : result;
+  state.fileAccess.set(path, info);
+  return info;
 }
 
 const state = {
@@ -56,6 +96,7 @@ const state = {
   tabDrafts: {},
   tabOriginals: {},
   temporaryTabs: new Map(),
+  fileAccess: new Map(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -354,6 +395,7 @@ function applyProjectWorkspace(projectKey) {
   state.tabDrafts = {};
   state.tabOriginals = {};
   state.temporaryTabs = new Map();
+  state.fileAccess = new Map();
   state.expandedGroups = new Set(saved.expandedGroups);
   state.splitPane = saved.splitPane;
   state.children = new Map();
@@ -613,7 +655,11 @@ function rememberTabOriginal(path, content) {
 
 function tabHasUnsavedChanges(path) {
   if (!path) return false;
-  if (isTemporaryTab(path)) return state.temporaryTabs.has(path);
+  if (isTemporaryTab(path)) {
+    return state.temporaryTabs.has(path)
+      && typeof state.tabDrafts[path] === 'string'
+      && state.tabDrafts[path].length > 0;
+  }
   const draft = state.tabDrafts[path];
   const original = state.tabOriginals[path];
   return typeof draft === 'string' && typeof original === 'string' && draft !== original;
@@ -630,7 +676,7 @@ async function saveTabsBeforeProjectSwitch() {
 
   const names = paths.map((path) => isTemporaryTab(path)
     ? state.temporaryTabs.get(path)?.name || 'Untitled'
-    : path);
+    : filePathForTab(path));
   const preview = names.slice(0, 5).join('\n');
   const remainder = names.length > 5 ? `\n…and ${names.length - 5} more` : '';
   const confirmed = await showConfirmDialog({
@@ -1029,6 +1075,7 @@ async function handleViewerLinkClick(event) {
 async function setMode(mode) {
   if (state.view === 'history') return;
   if (!state.selected) return;
+  if ((isExternalTab(state.selected) && mode === 'diff') || (mode === 'edit' && !tabIsWritable(state.selected))) return;
   saveCurrentTabState();
   if (state.mode === 'edit' && mode !== 'edit') {
     await saveFile();

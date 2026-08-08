@@ -313,6 +313,89 @@ function showConfirmDialog(options = {}) {
   });
 }
 
+function showSaveDiscardDialog(options = {}) {
+  closeActionMenu();
+  closePromptDialog(null);
+
+  const {
+    title = 'Save changes?',
+    message = '',
+    saveLabel = 'Save',
+    discardLabel = "Don't Save",
+    cancelLabel = 'Cancel',
+  } = options;
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'prompt-dialog-backdrop';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'prompt-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+
+    const titleEl = document.createElement('h3');
+    titleEl.className = 'prompt-dialog-title';
+    titleEl.textContent = title;
+    dialog.appendChild(titleEl);
+
+    if (message) {
+      const messageEl = document.createElement('p');
+      messageEl.className = 'prompt-dialog-message';
+      messageEl.textContent = message;
+      dialog.appendChild(messageEl);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'prompt-dialog-actions';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = cancelLabel;
+    cancelButton.addEventListener('click', () => closePromptDialog(null));
+
+    const discardButton = document.createElement('button');
+    discardButton.type = 'button';
+    discardButton.className = 'danger';
+    discardButton.textContent = discardLabel;
+    discardButton.addEventListener('click', () => closePromptDialog('discard'));
+
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'primary';
+    saveButton.textContent = saveLabel;
+    saveButton.addEventListener('click', () => closePromptDialog('save'));
+
+    actions.append(cancelButton, discardButton, saveButton);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const keydown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closePromptDialog(null);
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        closePromptDialog('save');
+      }
+    };
+    const overlayMouseDown = (event) => {
+      if (event.target === overlay) closePromptDialog(null);
+    };
+    const cleanup = () => {
+      document.removeEventListener('keydown', keydown, true);
+      overlay.removeEventListener('mousedown', overlayMouseDown);
+      overlay.remove();
+    };
+
+    activePromptDialog = { cleanup, resolve };
+    document.addEventListener('keydown', keydown, true);
+    overlay.addEventListener('mousedown', overlayMouseDown);
+    requestAnimationFrame(() => saveButton.focus());
+  });
+}
+
 function showActionMenu(anchor, items) {
   closeActionMenu();
 

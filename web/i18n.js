@@ -30,6 +30,18 @@
     'MindGit Runtime': 'MindGit 运行状态',
     'Close runtime information': '关闭运行状态',
     'New Temporary Tab': '新建临时标签页',
+    'Open File by Path...': '按路径打开文件…',
+    'Open File by Path': '按路径打开文件',
+    'Open': '打开',
+    'Opened': '已打开',
+    'Opening...': '正在打开…',
+    'Path is required': '路径不能为空',
+    'Enter any absolute path, or a path relative to the current project.': '请输入任意绝对路径，或相对于当前项目的路径。',
+    'Opened read-only': '已以只读方式打开',
+    'This file is read-only': '此文件为只读文件',
+    'Read Only': '只读',
+    'Save Temporary Tab?': '保存临时标签页？',
+    "Don't Save": '不保存',
     'Open Terminal': '打开终端',
     'New Terminal': '新建终端',
     'New File': '新建文件',
@@ -136,6 +148,10 @@
     if (match) return `重命名${match[1] === 'File' ? '文件' : '文件夹'}`;
     match = value.match(/^Delete (File|Folder)$/);
     if (match) return `删除${match[1] === 'File' ? '文件' : '文件夹'}`;
+    match = value.match(/^Save the contents of "(.+)" before closing\?$/);
+    if (match) return `关闭前是否保存“${match[1]}”的内容？`;
+    match = value.match(/^(.+) \(read only\)$/);
+    if (match) return `${match[1]}（只读）`;
     return value;
   }
 

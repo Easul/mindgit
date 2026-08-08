@@ -113,7 +113,8 @@ function renderFile(file, depth) {
 }
 
 function displayName(path) {
-  return path.includes('/') ? path.split('/').pop() : path;
+  const parts = String(path || '').split(/[\\/]/);
+  return parts[parts.length - 1] || path;
 }
 
 function isChanged(file) {
@@ -184,15 +185,17 @@ function renderFileTabs() {
   tabsContainer.style.display = 'flex';
   tabsContainer.innerHTML = state.openTabs.map(path => {
     const temporary = isTemporaryTab(path);
+    const external = isExternalTab(path);
+    const displayPath = filePathForTab(path);
     const fileName = temporary
       ? state.temporaryTabs.get(path)?.name || 'Untitled'
-      : path.includes('/') ? path.split('/').pop() : path;
+      : displayName(displayPath);
     const isActive = path === state.selected;
     const mode = currentModeForPath(path);
     const menuIconMode = isActive && mode === 'edit' ? 'save' : mode;
     const menuLabel = menuIconMode === 'save' ? 'Save' : modeLabel(mode);
     return `
-      <div class="file-tab ${isActive ? 'active' : ''} ${temporary ? 'temporary' : ''}" title="${escapeHTML(temporary ? `${fileName} (temporary)` : path)}">
+      <div class="file-tab ${isActive ? 'active' : ''} ${temporary ? 'temporary' : ''} ${external ? 'external' : ''}" title="${escapeHTML(temporary ? `${fileName} (temporary)` : `${displayPath}${external && !tabIsWritable(path) ? ' (read only)' : ''}`)}">
         <button class="file-tab-menu-button" type="button" data-tab-menu="${escapeAttr(path)}" title="${escapeAttr(menuLabel)} actions" aria-label="${escapeAttr(menuLabel)} actions for ${escapeAttr(fileName)}">
           ${modeIcon(menuIconMode)}
         </button>
@@ -217,14 +220,43 @@ function renderFileTabs() {
   });
 
   tabsContainer.querySelectorAll('[data-close-tab]').forEach(closeBtn => {
-    closeBtn.addEventListener('click', (e) => {
+    closeBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      closeTab(closeBtn.dataset.closeTab);
+      await closeTab(closeBtn.dataset.closeTab);
     });
   });
 }
 
-function closeTab(path) {
+async function closeTab(path) {
+  let closingPath = path;
+  const originalIndex = state.openTabs.indexOf(path);
+  if (originalIndex === -1) return;
+
+  if (isTemporaryTab(path)) {
+    if (path === state.selected) saveCurrentTabState();
+    const content = state.tabDrafts[path];
+    if (typeof content === 'string' && content.length > 0) {
+      const name = state.temporaryTabs.get(path)?.name || 'Untitled';
+      const choice = await showSaveDiscardDialog({
+        title: 'Save Temporary Tab?',
+        message: `Save the contents of "${name}" before closing?`,
+        saveLabel: 'Save',
+        discardLabel: "Don't Save",
+        cancelLabel: 'Cancel',
+      });
+      if (choice === null) return;
+      if (choice === 'save') {
+        if (!await saveTemporaryTab(path)) return;
+        closingPath = state.openTabs[originalIndex];
+        if (!closingPath) return;
+      }
+    }
+  }
+
+  await closeTabImmediately(closingPath);
+}
+
+async function closeTabImmediately(path) {
   const index = state.openTabs.indexOf(path);
   if (index === -1) return;
   const temporary = isTemporaryTab(path);
@@ -234,11 +266,12 @@ function closeTab(path) {
   delete state.tabDrafts[path];
   if (temporary) delete state.tabStates[path];
   state.temporaryTabs.delete(path);
+  state.fileAccess.delete(path);
 
   if (path === state.selected) {
     if (state.openTabs.length > 0) {
       const newIndex = index > 0 ? index - 1 : 0;
-      selectTab(state.openTabs[newIndex]);
+      await selectTab(state.openTabs[newIndex]);
     } else {
       state.selected = null;
       state.mode = 'full';
@@ -370,6 +403,8 @@ async function selectFile(path, options = {}) {
       state.status = await api('/api/status');
     }
 
+    await ensureFileInfo(path);
+
     if (!state.openTabs.includes(path)) {
       state.openTabs.push(path);
     }
@@ -377,10 +412,13 @@ async function selectFile(path, options = {}) {
     state.selected = path;
     const savedState = options.restoreState === false ? null : state.tabStates[path];
     state.mode = options.mode || savedState?.mode || 'full';
+    if ((isExternalTab(path) && state.mode === 'diff') || (state.mode === 'edit' && !tabIsWritable(path))) {
+      state.mode = 'full';
+    }
     const shouldExpandPDF = isMobileLayout() && typeof isPDFFile === 'function' && isPDFFile(path);
     state.mobileViewerExpanded = Boolean(options.mobileViewerExpanded ?? (shouldExpandPDF || state.mobileViewerExpanded));
     state.editorReady = false;
-    await ensurePathVisible(path);
+    if (!isExternalTab(path)) await ensurePathVisible(path);
     syncLayoutState();
     renderStatus();
     renderFileTabs();
@@ -464,6 +502,7 @@ async function ensurePathVisible(path) {
 
 function currentModeForPath(path) {
   if (isTemporaryTab(path)) return 'edit';
+  if (!tabIsWritable(path) && state.tabStates[path]?.mode === 'edit') return 'full';
   if (path === state.selected) return state.mode;
   return state.tabStates[path]?.mode || 'full';
 }
@@ -486,7 +525,7 @@ function isMobileLayout() {
   return window.matchMedia('(max-width: 900px)').matches;
 }
 
-function openTabMenu(anchor, path) {
+async function openTabMenu(anchor, path) {
   if (isTemporaryTab(path)) {
     showActionMenu(anchor, [
       { label: 'Save As...', action: () => saveTemporaryTab(path) },
@@ -495,6 +534,14 @@ function openTabMenu(anchor, path) {
     ]);
     return;
   }
+  const external = isExternalTab(path);
+  try {
+    await ensureFileInfo(path);
+  } catch (error) {
+    setMessage(error.message, 'error');
+    return;
+  }
+  const writable = tabIsWritable(path);
   const mode = currentModeForPath(path);
   const isLiveEdit = path === state.selected && state.mode === 'edit';
   const gitAvailable = state.status?.gitAvailable !== false;
@@ -502,19 +549,20 @@ function openTabMenu(anchor, path) {
     {
       label: 'Diff',
       active: mode === 'diff',
-      disabled: !gitAvailable,
+      disabled: external || !gitAvailable,
       action: () => setTabMode(path, 'diff'),
     },
     { label: 'Full', active: mode === 'full', action: () => setTabMode(path, 'full') },
     {
-      label: isLiveEdit ? 'Save' : 'Edit',
+      label: writable ? (isLiveEdit ? 'Save' : 'Edit') : 'Read Only',
       active: mode === 'edit',
-      disabled: isLiveEdit && (!state.editorReady || state.saveInProgress),
+      disabled: !writable || isLiveEdit && (!state.editorReady || state.saveInProgress),
       action: () => editOrSaveTab(path),
     },
     { separator: true },
-    { label: 'Copy Relative Path', action: () => copyPath(path, false) },
+    ...(!external ? [{ label: 'Copy Relative Path', action: () => copyPath(path, false) }] : []),
     { label: 'Copy Absolute Path', action: () => copyPath(path, true) },
+    { label: 'Download', action: () => downloadFile(path) },
   ];
 
   if (!state.embed) {
@@ -545,6 +593,7 @@ function openTabMenu(anchor, path) {
 }
 
 async function setTabMode(path, mode) {
+  if ((isExternalTab(path) && mode === 'diff') || (mode === 'edit' && !tabIsWritable(path))) return;
   if (state.selected !== path) {
     await selectFile(path, { mode, restoreState: false });
     return;
@@ -567,6 +616,7 @@ function copyPath(path, absolute) {
 }
 
 function absolutePathFor(path) {
+  if (isExternalTab(path)) return externalTabPath(path);
   const root = state.status?.root || '';
   if (!root) return path;
   if (!path) return root;
@@ -594,6 +644,7 @@ function openTreeMenu(anchor, path, kind) {
   if (!path && !state.embed) {
     items.push(
       { label: 'New Temporary Tab', action: () => createTemporaryTab() },
+      { label: 'Open File by Path...', action: () => promptOpenFilePath() },
       { separator: true },
       { label: 'Open Terminal', action: () => openTerminalPanel() },
       { label: 'New Terminal', action: () => openTerminalPanel({ newTab: true }) },
@@ -633,6 +684,33 @@ function openTreeMenu(anchor, path, kind) {
   }
 
   showActionMenu(anchor, items);
+}
+
+async function promptOpenFilePath() {
+  const input = await showPromptDialog({
+    title: 'Open File by Path',
+    message: 'Enter any absolute path, or a path relative to the current project.',
+    placeholder: '/path/to/file.txt',
+    confirmLabel: 'Open',
+    cancelLabel: 'Cancel',
+  });
+  if (input === null) return;
+  const path = input.trim();
+  if (!path) {
+    setMessage('Path is required', 'error');
+    return;
+  }
+
+  try {
+    setMessage('Opening...');
+    const result = await api(`/api/fs?path=${encodeURIComponent(path)}`);
+    const tabPath = result.external ? externalTabId(result.path) : result.path;
+    state.fileAccess.set(tabPath, result);
+    await selectFile(tabPath, { restoreState: false });
+    setMessage(result.writable ? 'Opened' : 'Opened read-only', 'ok');
+  } catch (error) {
+    setMessage(error.message, 'error');
+  }
 }
 
 function createTemporaryTab() {
@@ -1032,15 +1110,14 @@ function isPathInside(path, target) {
 }
 
 function downloadFile(path) {
-  const url = new URL('/api/download', window.location.origin);
+  const url = new URL(fileRequestPath('/api/download', path), window.location.origin);
   if (state.currentProjectKey) {
     url.searchParams.set('project', state.currentProjectKey);
   }
-  url.searchParams.set('path', path);
 
   const anchor = document.createElement('a');
   anchor.href = `${url.pathname}${url.search}`;
-  anchor.download = displayName(path);
+  anchor.download = displayName(filePathForTab(path));
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();

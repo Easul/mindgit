@@ -21,7 +21,8 @@ func (a App) handleXMindFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
-	path, err := app.cleanPath(r.URL.Query().Get("path"))
+	external := r.URL.Query().Get("external") == "1"
+	path, err := app.resolveRequestedFilePath(r.URL.Query().Get("path"), external)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
@@ -31,7 +32,7 @@ func (a App) handleXMindFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := app.readProjectFile(path)
+	content, err := app.readRequestedFile(path, external)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return

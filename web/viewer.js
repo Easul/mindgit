@@ -106,6 +106,8 @@ function attachScrollableInteractionTarget(scrollTarget) {
 async function renderSelected() {
   if (!state.selected) return;
   cleanupViewerArtifacts();
+  if (!isTemporaryTab(state.selected)) await ensureFileInfo(state.selected);
+  const selectedFilePath = filePathForTab(state.selected);
   const draftContent = typeof state.tabDrafts[state.selected] === 'string'
     ? state.tabDrafts[state.selected]
     : null;
@@ -118,19 +120,28 @@ async function renderSelected() {
     return;
   }
 
-  const file = state.status.files.find((item) => item.path === state.selected);
+  const file = isExternalTab(state.selected)
+    ? null
+    : state.status.files.find((item) => item.path === state.selected);
   if ($('review-summary')) {
-    $('review-summary').textContent = file
+    $('review-summary').textContent = isExternalTab(state.selected)
+      ? `${selectedFilePath}${tabIsWritable(state.selected) ? '' : ' (read only)'}`
+      : file
       ? `${file.path}: ${describeFileStatus(file)}, +${file.additions} / -${file.deletions} lines.`
       : state.selected;
   }
 
-  const isBinary = isLikelyBinary(state.selected);
-  const isImage = isImageFile(state.selected);
-  const isPDF = isPDFFile(state.selected);
-  const isStructured = isStructuredFile(state.selected);
+  const isBinary = isLikelyBinary(selectedFilePath);
+  const isImage = isImageFile(selectedFilePath);
+  const isPDF = isPDFFile(selectedFilePath);
+  const isStructured = isStructuredFile(selectedFilePath);
 
   if (state.mode === 'edit') {
+    if (!tabIsWritable(state.selected)) {
+      state.mode = 'full';
+      await renderSelected();
+      return;
+    }
     if (isStructured) {
       state.editorReady = false;
       updateEditButton('Loading...', { disabled: true, primary: true });
@@ -148,7 +159,7 @@ async function renderSelected() {
     let content = draftContent;
     if (content === null) {
       try {
-        content = (await api(`/api/file?path=${encodeURIComponent(state.selected)}`)).content;
+        content = (await api(fileRequestPath('/api/file', state.selected))).content;
       } catch (error) {
         renderTextPreviewError(error);
         return;
@@ -178,7 +189,7 @@ async function renderSelected() {
     } else {
       let data;
       try {
-        data = await api(`/api/file?path=${encodeURIComponent(state.selected)}`);
+        data = await api(fileRequestPath('/api/file', state.selected));
       } catch (error) {
         renderTextPreviewError(error);
         syncViewerHeight();
@@ -189,6 +200,11 @@ async function renderSelected() {
       renderFullContent(data.content, state.selected);
     }
   } else {
+    if (isExternalTab(state.selected)) {
+      state.mode = 'full';
+      await renderSelected();
+      return;
+    }
     const data = await api(`/api/diff?path=${encodeURIComponent(state.selected)}`);
     $('viewer').innerHTML = `<pre tabindex="-1">${renderDiff(data.diff || 'No diff for this file.')}</pre>`;
     attachScrollableInteractionTarget(getViewerScrollTarget());
@@ -257,9 +273,8 @@ function renderTextPreviewError(error) {
 }
 
 function fileAPIURL(pathname, path) {
-  const url = new URL(pathname, window.location.origin);
+  const url = new URL(fileRequestPath(pathname, path), window.location.origin);
   if (state.currentProjectKey) url.searchParams.set('project', state.currentProjectKey);
-  url.searchParams.set('path', path);
   return `${url.pathname}${url.search}`;
 }
 
@@ -802,6 +817,10 @@ async function saveFile() {
   if (isTemporaryTab(state.selected)) {
     return saveTemporaryTab(state.selected);
   }
+  if (!tabIsWritable(state.selected)) {
+    setMessage('This file is read-only', 'error');
+    return false;
+  }
   try {
     state.saveInProgress = true;
     setMessage('Saving...');
@@ -812,18 +831,23 @@ async function saveFile() {
     const cursorStart = editor ? editor.selectionStart : 0;
     const cursorEnd = editor ? editor.selectionEnd : 0;
 
-    const status = await api('/api/file', {
+    const result = await api(fileRequestPath('/api/file', state.selected), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: state.selected, content }),
+      body: JSON.stringify({ path: filePathForTab(state.selected), content }),
     });
 
     state.content = content;
     state.tabDrafts[state.selected] = content;
     state.tabOriginals[state.selected] = content;
-    state.status = status;
-    await refreshLoadedGroups();
-    renderStatus();
+    if (isExternalTab(state.selected)) {
+      state.fileAccess.set(state.selected, result);
+      renderFileTabs();
+    } else {
+      state.status = result;
+      await refreshLoadedGroups();
+      renderStatus();
+    }
 
     if (editor) {
       editor.focus();
@@ -1469,8 +1493,7 @@ function renderMarkdownInlines(source, context) {
 }
 
 function markdownAssetURL(path) {
-  const url = new URL('/api/file', window.location.origin);
-  url.searchParams.set('path', path);
+  const url = new URL(fileRequestPath('/api/file', path), window.location.origin);
   if (state.currentProjectKey) {
     url.searchParams.set('project', state.currentProjectKey);
   }
@@ -1490,6 +1513,22 @@ function resolveMarkdownLinkTarget(destination, currentPath) {
   const hashIndex = raw.indexOf('#');
   const hash = hashIndex >= 0 ? raw.slice(hashIndex + 1) : '';
   const pathPart = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw;
+  if (isExternalTab(currentPath)) {
+    const resolvedExternalPath = resolveExternalRelativePath(pathPart, externalTabPath(currentPath));
+    if (!resolvedExternalPath) return null;
+    const tabPath = externalTabId(resolvedExternalPath);
+    const href = new URL('/', window.location.origin);
+    if (state.currentProjectKey) href.searchParams.set('project', state.currentProjectKey);
+    href.searchParams.set('path', tabPath);
+    href.searchParams.set('mode', 'full');
+    if (hash) href.hash = hash;
+    return {
+      type: 'local',
+      href: `${href.pathname}${href.search}${href.hash}`,
+      path: tabPath,
+      hash,
+    };
+  }
   const baseDir = currentPath.includes('/') ? currentPath.slice(0, currentPath.lastIndexOf('/') + 1) : '';
   const candidate = pathPart.startsWith('/') ? pathPart.replace(/^\/+/, '') : `${baseDir}${pathPart}`;
   const resolvedPath = normalizeRepoRelativePath(candidate);
@@ -1508,6 +1547,32 @@ function resolveMarkdownLinkTarget(destination, currentPath) {
     path: resolvedPath,
     hash,
   };
+}
+
+function resolveExternalRelativePath(destination, currentPath) {
+  const current = String(currentPath || '').replaceAll('\\', '/');
+  const raw = String(destination || '').replaceAll('\\', '/');
+  const drive = current.match(/^[A-Za-z]:/)?.[0] || '';
+  const absolute = raw.startsWith('/') || /^[A-Za-z]:\//.test(raw);
+  const base = current.includes('/') ? current.slice(0, current.lastIndexOf('/') + 1) : '';
+  const candidate = absolute ? raw : `${base}${raw}`;
+  const candidateDrive = candidate.match(/^[A-Za-z]:/)?.[0] || drive;
+  const body = candidateDrive ? candidate.slice(candidateDrive.length) : candidate;
+  const parts = [];
+  for (const segment of body.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (!parts.length) return null;
+      parts.pop();
+    } else {
+      parts.push(segment);
+    }
+  }
+  const prefix = candidateDrive ? `${candidateDrive}/` : '/';
+  const normalized = `${prefix}${parts.join('/')}`;
+  return currentPath.includes('\\') && !currentPath.includes('/')
+    ? normalized.replaceAll('/', '\\')
+    : normalized;
 }
 
 function normalizeRepoRelativePath(path) {
