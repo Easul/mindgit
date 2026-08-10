@@ -1053,6 +1053,7 @@ async function handleViewerLinkClick(event) {
   if (!anchor) return;
 
   const isModifiedOpen = hasOpenLinkModifier(event);
+  const rawHref = String(anchor.getAttribute('href') || '').trim();
   const localPath = anchor.dataset.mindgitPath || '';
   const hash = anchor.dataset.mindgitHash || anchor.hash?.slice(1) || '';
 
@@ -1067,8 +1068,18 @@ async function handleViewerLinkClick(event) {
     return;
   }
 
-  if (!isModifiedOpen) return;
+  if (rawHref.startsWith('#')) return;
   event.preventDefault();
+  if (/^javascript:/i.test(rawHref)) return;
+  if (!isModifiedOpen) {
+    const confirmed = await showConfirmDialog({
+      title: t('Open Link'),
+      message: `${t('Open this link in a new tab?')}\n${anchor.href}`,
+      confirmLabel: t('Open in New Tab'),
+      cancelLabel: t('Cancel'),
+    });
+    if (!confirmed) return;
+  }
   window.open(anchor.href, '_blank', 'noopener');
 }
 

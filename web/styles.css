@@ -704,6 +704,7 @@
       .prompt-dialog-message {
         margin: 0 0 14px;
         color: var(--muted);
+        overflow-wrap: anywhere;
         white-space: pre-wrap;
       }
       .prompt-dialog-field {

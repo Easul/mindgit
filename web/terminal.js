@@ -1,6 +1,5 @@
 const terminalState = {
   initialized: false,
-  loaded: false,
   activeId: '',
   clients: new Map(),
   ctrl: false,
@@ -79,8 +78,8 @@ function terminalWebSocketURL(client, id = '') {
     url.searchParams.set('id', id);
   } else if (client?.sshName) {
     url.searchParams.set('ssh', client.sshName);
-  } else if (state.currentProjectKey) {
-    url.searchParams.set('project', state.currentProjectKey);
+  } else if (client?.projectKey || state.currentProjectKey) {
+    url.searchParams.set('project', client?.projectKey || state.currentProjectKey);
   }
   if (!id && client?.forceNew) url.searchParams.set('new', '1');
   return url.toString();
@@ -124,7 +123,6 @@ function createTerminalClient(summary = null, options = {}) {
     ready: false,
     closed: Boolean(summary?.closed),
     firstOutput: false,
-    ime: { composing: false, recoveryTimer: 0 },
   };
   terminalState.clients.set(temporaryId, client);
   configureTerminalInput(client);
@@ -166,6 +164,7 @@ function connectTerminal(client, existingId) {
   socket.binaryType = 'arraybuffer';
   client.socket = socket;
   client.ready = false;
+  let connectionReady = false;
 
   socket.addEventListener('open', () => {
     logTerminalTiming('WebSocket opened', startedAt);
@@ -188,7 +187,9 @@ function connectTerminal(client, existingId) {
       client.projectKey = message.projectKey;
       client.project = message.project;
       client.ready = true;
+      client.forceNew = false;
       client.closed = false;
+      connectionReady = true;
       logTerminalTiming('terminal ready', startedAt);
       client.host.dataset.terminalId = client.id;
       if (previousId !== client.id) {
@@ -211,7 +212,9 @@ function connectTerminal(client, existingId) {
     client.ready = false;
     if (client.disposed || client.closed || !client.id || client.id.startsWith('pending-')) return;
     clearTimeout(client.reconnectTimer);
-    client.reconnectTimer = window.setTimeout(() => connectTerminal(client, client.id), 1000);
+    client.reconnectTimer = window.setTimeout(() => {
+      connectTerminal(client, existingId && !connectionReady ? '' : client.id);
+    }, 1000);
   });
   socket.addEventListener('error', () => {
     console.warn('[MindGit terminal] WebSocket error');
@@ -234,34 +237,7 @@ function sendTerminalInput(client, data) {
 }
 
 function configureTerminalInput(client) {
-  const { terminal, ime } = client;
-  const textarea = terminal.textarea;
-  terminal.onData((data) => sendTerminalInput(client, data));
-  if (!textarea) return;
-  textarea.addEventListener('compositionstart', () => {
-    ime.composing = true;
-    window.clearTimeout(ime.recoveryTimer);
-  });
-  textarea.addEventListener('compositionend', () => {
-    ime.composing = false;
-    window.clearTimeout(ime.recoveryTimer);
-    window.setTimeout(() => {
-      if (!ime.composing) textarea.value = '';
-    }, 0);
-  });
-  textarea.addEventListener('blur', () => {
-    if (!ime.composing) return;
-    textarea.dispatchEvent(new CompositionEvent('compositionend', { data: '' }));
-  });
-  textarea.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || !ime.composing) return;
-    window.clearTimeout(ime.recoveryTimer);
-    ime.recoveryTimer = window.setTimeout(() => {
-      if (ime.composing) {
-        textarea.dispatchEvent(new CompositionEvent('compositionend', { data: textarea.value }));
-      }
-    }, 120);
-  });
+  client.terminal.onData((data) => sendTerminalInput(client, data));
 }
 
 function terminalCellFromPointer(client, event) {
@@ -454,7 +430,6 @@ async function closeTerminal(id) {
   if (!client) return;
   client.disposed = true;
   clearTimeout(client.reconnectTimer);
-  clearTimeout(client.ime?.recoveryTimer);
   client.socket?.close();
   client.cleanupScrollbar?.();
   client.terminal.dispose();
@@ -473,7 +448,6 @@ async function closeTerminal(id) {
 }
 
 function fetchTerminalSessions() {
-  if (terminalState.loaded) return Promise.resolve([]);
   if (terminalState.sessionsPromise) return terminalState.sessionsPromise;
   terminalState.sessionsPromise = fetch('/api/terminals', { cache: 'no-store' })
     .then(async (response) => {
@@ -482,15 +456,16 @@ function fetchTerminalSessions() {
     })
     .catch(() => [])
     .finally(() => {
-      terminalState.loaded = true;
+      terminalState.sessionsPromise = null;
     });
   return terminalState.sessionsPromise;
 }
 
-async function loadTerminalSessions() {
-  const sessions = await fetchTerminalSessions();
-  if (terminalState.clients.size) return;
-  for (const summary of sessions) createTerminalClient(summary);
+function loadTerminalSessions(sessions) {
+  for (const summary of sessions) {
+    if (summary.closed || terminalState.clients.has(summary.id)) continue;
+    createTerminalClient(summary);
+  }
 }
 
 async function openTerminalPanel(options = {}) {
@@ -513,8 +488,7 @@ async function openTerminalPanel(options = {}) {
     setMessage(error.message, 'error');
     return;
   }
-  await sessions;
-  await loadTerminalSessions();
+  loadTerminalSessions(await sessions);
   let active = null;
   if (!options.newTab && !options.sshName) {
     active = [...terminalState.clients.values()].find((client) => (

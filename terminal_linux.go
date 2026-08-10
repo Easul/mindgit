@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -18,10 +20,43 @@ type terminalWindowSize struct {
 }
 
 func startPTY(root string) (*os.File, *exec.Cmd, error) {
-	command := exec.Command(terminalShell())
+	command := localTerminalCommand()
 	command.Dir = root
-	command.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	command.Env = terminalEnvironment(os.Environ())
 	return startPTYCommand(command)
+}
+
+func localTerminalCommand() *exec.Cmd {
+	shell := terminalShell()
+	runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR"))
+	if os.Getenv("INVOCATION_ID") == "" || runtimeDir == "" {
+		return exec.Command(shell)
+	}
+	if info, err := os.Stat(filepath.Join(runtimeDir, "bus")); err != nil || info.Mode()&os.ModeSocket == 0 {
+		return exec.Command(shell)
+	}
+	systemdRun, err := exec.LookPath("systemd-run")
+	if err != nil {
+		return exec.Command(shell)
+	}
+	return exec.Command(systemdRun,
+		"--user", "--scope", "--quiet", "--collect", "--no-ask-password", "--same-dir", "--", shell,
+	)
+}
+
+func terminalEnvironment(environment []string) []string {
+	result := append([]string(nil), environment...)
+	hasLocale := false
+	for _, value := range result {
+		if strings.HasPrefix(value, "LANG=") || strings.HasPrefix(value, "LC_ALL=") || strings.HasPrefix(value, "LC_CTYPE=") {
+			hasLocale = true
+			break
+		}
+	}
+	if !hasLocale {
+		result = append(result, "LANG=C.UTF-8")
+	}
+	return append(result, "TERM=xterm-256color", "COLORTERM=truecolor")
 }
 
 func startPTYCommand(command *exec.Cmd) (*os.File, *exec.Cmd, error) {
