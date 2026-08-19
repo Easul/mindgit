@@ -1,4 +1,50 @@
 const systemThemeMediaQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+const nativeFetch = window.fetch.bind(window);
+const maximumAuthenticationTimerDelay = 2147483647;
+let authenticationExpiryTimer = 0;
+let authenticationReloadPending = false;
+
+function reloadForExpiredAuthentication() {
+  if (authenticationReloadPending) return;
+  authenticationReloadPending = true;
+  window.location.reload();
+}
+
+async function refreshAuthenticationExpiry() {
+  try {
+    const response = await nativeFetch('/api/auth/status', { cache: 'no-store' });
+    if (!response.ok) return;
+    const status = await response.json();
+    if (status.enabled && !status.authenticated) {
+      reloadForExpiredAuthentication();
+      return;
+    }
+    scheduleAuthenticationExpiry(status);
+  } catch {}
+}
+
+function scheduleAuthenticationExpiry(status) {
+  window.clearTimeout(authenticationExpiryTimer);
+  authenticationExpiryTimer = 0;
+  const remaining = Number(status?.expiresInMilliseconds);
+  if (!status?.enabled || !status.authenticated || !Number.isFinite(remaining)) return;
+  const delay = Math.min(Math.max(remaining, 0) + 250, maximumAuthenticationTimerDelay);
+  authenticationExpiryTimer = window.setTimeout(() => {
+    if (delay < maximumAuthenticationTimerDelay) {
+      reloadForExpiredAuthentication();
+      return;
+    }
+    refreshAuthenticationExpiry();
+  }, delay);
+}
+
+window.fetch = async (...args) => {
+  const response = await nativeFetch(...args);
+  if (response.headers.get('X-MindGit-Auth-Required') === '1') {
+    reloadForExpiredAuthentication();
+  }
+  return response;
+};
 
 function storedThemePreference() {
   const theme = localStorage.getItem('mindgit-theme');
@@ -113,7 +159,10 @@ async function ensureAuthenticated() {
   const response = await fetch('/api/auth/status', { cache: 'no-store' });
   const status = await response.json();
   if (!response.ok) throw new Error(status.error || response.statusText);
-  if (!status.enabled || status.authenticated) return;
+  if (!status.enabled || status.authenticated) {
+    scheduleAuthenticationExpiry(status);
+    return;
+  }
 
   const dialog = $('login-dialog');
   const form = $('login-form');
@@ -139,6 +188,8 @@ async function ensureAuthenticated() {
           const message = (await loginResponse.text()).trim();
           throw new Error(message || loginResponse.statusText);
         }
+        const loginStatus = await loginResponse.json();
+        scheduleAuthenticationExpiry(loginStatus);
         form.removeEventListener('submit', unlock);
         password.value = '';
         dialog.hidden = true;

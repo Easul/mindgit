@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	passwordIterations = 210000
-	authCookieName     = "mindgit_session"
+	passwordIterations      = 210000
+	authCookieName          = "mindgit_session"
+	authRequiredHeader      = "X-MindGit-Auth-Required"
+	authRequiredHeaderValue = "1"
 )
 
 type AuthManager struct {
@@ -49,6 +51,12 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+type authStatusResponse struct {
+	Enabled               bool  `json:"enabled"`
+	Authenticated         bool  `json:"authenticated"`
+	ExpiresInMilliseconds int64 `json:"expiresInMilliseconds,omitempty"`
+}
+
 func NewAuthManager(config AuthConfig, vaultSalt string) *AuthManager {
 	decodedSalt, _ := base64.RawStdEncoding.DecodeString(vaultSalt)
 	return &AuthManager{
@@ -62,11 +70,14 @@ func NewAuthManager(config AuthConfig, vaultSalt string) *AuthManager {
 }
 
 func (a *AuthManager) handleStatus(w http.ResponseWriter, r *http.Request) {
-	authorized := !a.enabled || a.authorized(r)
-	writeJSON(w, map[string]bool{
-		"enabled":       a.enabled,
-		"authenticated": authorized,
-	}, nil)
+	status := authStatusResponse{Enabled: a.enabled, Authenticated: !a.enabled}
+	if a.enabled {
+		if session, ok := a.session(r); ok {
+			status.Authenticated = true
+			status.ExpiresInMilliseconds = max(session.Expires.Sub(time.Now()).Milliseconds(), 1)
+		}
+	}
+	writeJSON(w, status, nil)
 }
 
 func (a *AuthManager) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +86,7 @@ func (a *AuthManager) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.enabled {
-		writeJSON(w, map[string]bool{"authenticated": true}, nil)
+		writeJSON(w, authStatusResponse{Authenticated: true}, nil)
 		return
 	}
 	client := clientAddress(r)
@@ -122,7 +133,11 @@ func (a *AuthManager) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 		Secure:   r.TLS != nil,
 	})
-	writeJSON(w, map[string]bool{"authenticated": true}, nil)
+	writeJSON(w, authStatusResponse{
+		Enabled:               true,
+		Authenticated:         true,
+		ExpiresInMilliseconds: max(expires.Sub(time.Now()).Milliseconds(), 1),
+	}, nil)
 }
 
 func (a *AuthManager) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -154,6 +169,7 @@ func (a *AuthManager) middleware(next http.Handler) http.Handler {
 		}
 		if a.enabled && !a.authorized(r) {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set(authRequiredHeader, authRequiredHeaderValue)
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "authentication required"})
 			return
@@ -163,9 +179,14 @@ func (a *AuthManager) middleware(next http.Handler) http.Handler {
 }
 
 func (a *AuthManager) authorized(r *http.Request) bool {
+	_, ok := a.session(r)
+	return ok
+}
+
+func (a *AuthManager) session(r *http.Request) (authSession, bool) {
 	cookie, err := r.Cookie(authCookieName)
 	if err != nil || cookie.Value == "" {
-		return false
+		return authSession{}, false
 	}
 	now := time.Now()
 	a.mu.Lock()
@@ -173,9 +194,9 @@ func (a *AuthManager) authorized(r *http.Request) bool {
 	session, ok := a.sessions[cookie.Value]
 	if !ok || !session.Expires.After(now) {
 		delete(a.sessions, cookie.Value)
-		return false
+		return authSession{}, false
 	}
-	return true
+	return session, true
 }
 
 func (a *AuthManager) loginWait(client string) time.Duration {
