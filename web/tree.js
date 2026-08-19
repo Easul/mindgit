@@ -678,6 +678,7 @@ function openTreeMenu(anchor, path, kind) {
   if (path) {
     items.push(
       { separator: true },
+      { label: 'Move...', action: () => promptMovePath(path, kind === 'dir') },
       { label: 'Rename', action: () => promptRenamePath(path, kind === 'dir') },
       { label: 'Delete', danger: true, action: () => deletePath(path, kind === 'dir') },
     );
@@ -999,6 +1000,28 @@ function remapPathObjectEntries(entries, source, destination) {
   ]));
 }
 
+function remapPathMapEntries(entries, source, destination) {
+  return new Map([...entries].map(([path, value]) => [
+    renamedPath(path, source, destination),
+    value,
+  ]));
+}
+
+function remapWorkspacePath(source, destination) {
+  state.openTabs = state.openTabs.map((path) => renamedPath(path, source, destination));
+  state.tabStates = remapPathObjectEntries(state.tabStates, source, destination);
+  state.tabDrafts = remapPathObjectEntries(state.tabDrafts, source, destination);
+  state.tabOriginals = remapPathObjectEntries(state.tabOriginals, source, destination);
+  state.fileAccess = remapPathMapEntries(state.fileAccess, source, destination);
+  state.expandedGroups = new Set([...state.expandedGroups].map((path) => renamedPath(path, source, destination)));
+  state.selected = state.selected ? renamedPath(state.selected, source, destination) : null;
+  state.splitPane.tabs = state.splitPane.tabs.map((path) => renamedPath(path, source, destination));
+  state.splitPane.selectedPath = state.splitPane.selectedPath
+    ? renamedPath(state.splitPane.selectedPath, source, destination)
+    : '';
+  state.children = new Map();
+}
+
 async function renamePath(path, name) {
   const parent = groupForPath(path);
   const destination = parent ? `${parent}/${name}` : name;
@@ -1012,16 +1035,7 @@ async function renamePath(path, name) {
       body: JSON.stringify({ path, name }),
     });
 
-    state.openTabs = state.openTabs.map((tabPath) => renamedPath(tabPath, path, destination));
-    state.tabStates = remapPathObjectEntries(state.tabStates, path, destination);
-    state.tabDrafts = remapPathObjectEntries(state.tabDrafts, path, destination);
-    state.expandedGroups = new Set([...state.expandedGroups].map((group) => renamedPath(group, path, destination)));
-    state.selected = state.selected ? renamedPath(state.selected, path, destination) : null;
-    state.splitPane.tabs = state.splitPane.tabs.map((tabPath) => renamedPath(tabPath, path, destination));
-    state.splitPane.selectedPath = state.splitPane.selectedPath
-      ? renamedPath(state.splitPane.selectedPath, path, destination)
-      : '';
-    state.children = new Map();
+    remapWorkspacePath(path, destination);
 
     await refreshLoadedGroups();
     renderStatus();
@@ -1035,6 +1049,57 @@ async function renamePath(path, name) {
     saveWorkspaceState();
     notifyEmbedState();
     setMessage('Renamed', 'ok');
+  } catch (error) {
+    setMessage(error.message, 'error');
+  }
+}
+
+async function promptMovePath(path, isDir) {
+  const currentDirectory = groupForPath(path) || '.';
+  const input = await showPromptDialog({
+    title: `Move ${isDir ? 'Folder' : 'File'}`,
+    message: `Enter a destination folder for "${path}". Use an absolute path inside the current project, or a path relative to the project root.`,
+    value: currentDirectory,
+    placeholder: 'docs/archive',
+    confirmLabel: 'Move',
+    cancelLabel: 'Cancel',
+  });
+  if (input === null) return;
+  const destination = input.trim();
+  if (!destination) {
+    setMessage('Destination path is required', 'error');
+    return;
+  }
+  await movePath(path, destination);
+}
+
+async function movePath(path, destinationDirectory) {
+  try {
+    saveCurrentTabState();
+    setMessage('Moving...');
+    const result = await api('/api/fs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, destination: destinationDirectory }),
+    });
+    state.status = result.status;
+    remapWorkspacePath(path, result.path);
+    for (const ancestor of ancestorPaths(result.path)) {
+      state.expandedGroups.add(ancestor);
+    }
+
+    await refreshLoadedGroups();
+    renderStatus();
+    renderFileTabs();
+    renderSplitPane();
+    if (state.selected) {
+      await renderSelected();
+      restoreTabState(state.selected);
+    }
+    syncLayoutState();
+    saveWorkspaceState();
+    notifyEmbedState();
+    setMessage('Moved', 'ok');
   } catch (error) {
     setMessage(error.message, 'error');
   }

@@ -94,7 +94,13 @@ exec sh -c "$last"
 	if err := app.renameRemotePath("docs/new.txt", "docs/renamed.txt"); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.deleteRemotePath("docs/renamed.txt"); err != nil {
+	if err := app.createRemotePath("archive", "dir"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.moveRemotePath("docs/renamed.txt", "archive", "archive/renamed.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.deleteRemotePath("archive/renamed.txt"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "docs", "renamed.txt")); !os.IsNotExist(err) {

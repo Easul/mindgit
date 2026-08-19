@@ -376,6 +376,89 @@ func TestHandleRenamePathRejectsInvalidOrExistingName(t *testing.T) {
 	}
 }
 
+func TestHandleMovePathMovesFileToRelativeDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "archive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	response := newTestResponse()
+	body := strings.NewReader(`{"path":"notes.txt","destination":"archive"}`)
+	testRequestApp(root).handleMovePath(response, newTestRequest(t, http.MethodPut, "/api/fs", body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", response.Code, response.Body.String())
+	}
+	var result MovePathResponse
+	if err := json.NewDecoder(&response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != "archive/notes.txt" {
+		t.Fatalf("path = %q", result.Path)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "archive", "notes.txt"))
+	if err != nil || string(content) != "hello" {
+		t.Fatalf("moved content = %q, %v", content, err)
+	}
+}
+
+func TestHandleMovePathMovesDirectoryToAbsoluteProjectPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "source", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "target"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "source", "nested", "file.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	response := newTestResponse()
+	body := strings.NewReader(fmt.Sprintf(`{"path":"source","destination":%q}`, filepath.Join(root, "target")))
+	testRequestApp(root).handleMovePath(response, newTestRequest(t, http.MethodPut, "/api/fs", body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "target", "source", "nested", "file.txt")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHandleMovePathRejectsUnsafeDestinations(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "folder", "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "outside-link")); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []string{
+		fmt.Sprintf(`{"path":"file.txt","destination":%q}`, outside),
+		`{"path":"file.txt","destination":"outside-link"}`,
+		`{"path":"folder","destination":"folder/child"}`,
+		`{"path":"file.txt","destination":".git"}`,
+		`{"path":"file.txt","destination":"."}`,
+	}
+	for _, body := range tests {
+		response := newTestResponse()
+		testRequestApp(root).handleMovePath(response, newTestRequest(t, http.MethodPut, "/api/fs", strings.NewReader(body)))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: status = %d, want %d; response=%s", body, response.Code, http.StatusBadRequest, response.Body.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "file.txt")); err != nil {
+		t.Fatalf("source changed after rejected move: %v", err)
+	}
+}
+
 func assertNoUploadParts(t *testing.T, directory string) {
 	t.Helper()
 	entries, err := os.ReadDir(directory)

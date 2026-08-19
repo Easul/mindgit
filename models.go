@@ -64,6 +64,16 @@ type RenamePathRequest struct {
 	Name string `json:"name"`
 }
 
+type MovePathRequest struct {
+	Path        string `json:"path"`
+	Destination string `json:"destination"`
+}
+
+type MovePathResponse struct {
+	Path   string         `json:"path"`
+	Status StatusResponse `json:"status"`
+}
+
 type DeletePathRequest struct {
 	Path    string `json:"path"`
 	Confirm bool   `json:"confirm"`

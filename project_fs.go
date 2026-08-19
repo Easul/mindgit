@@ -202,6 +202,30 @@ mv -- "$source" "$destination"`
 	return err
 }
 
+func (a App) moveRemotePath(source, destinationDirectory, destination string) error {
+	script := `root=$1
+source=$2
+destination_directory=$3
+destination=$4
+resolved_root=$(cd -- "$root" && pwd -P) || exit 1
+source_parent=${source%/*}
+[ "$source_parent" = "$source" ] && source_parent=.
+resolved_source_parent=$(cd -- "$source_parent" && pwd -P) || exit 1
+[ -n "$destination_directory" ] || destination_directory=.
+resolved_destination_directory=$(cd -- "$destination_directory" && pwd -P) || exit 1
+case "$resolved_source_parent" in "$resolved_root"|"$resolved_root"/*) ;; *) echo 'source escapes project root through a symbolic link' >&2; exit 1 ;; esac
+case "$resolved_destination_directory" in "$resolved_root"|"$resolved_root"/*) ;; *) echo 'destination escapes project root through a symbolic link' >&2; exit 1 ;; esac
+[ -e "$source" ] || [ -L "$source" ] || { echo 'source does not exist' >&2; exit 1; }
+[ ! -e "$destination" ] && [ ! -L "$destination" ] || { echo 'destination already exists' >&2; exit 1; }
+if [ -d "$source" ] && [ ! -L "$source" ]; then
+  resolved_source=$(cd -- "$source" && pwd -P) || exit 1
+  case "$resolved_destination_directory" in "$resolved_source"|"$resolved_source"/*) echo 'cannot move a folder into itself' >&2; exit 1 ;; esac
+fi
+mv -- "$source" "$destination"`
+	_, err := a.run("sh", "-c", script, "mindgit-move", a.root, source, destinationDirectory, destination)
+	return err
+}
+
 func (a App) deleteRemotePath(path string) error {
 	script := `path=$1
 [ -e "$path" ] || { echo 'path does not exist' >&2; exit 1; }

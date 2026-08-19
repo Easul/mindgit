@@ -47,6 +47,59 @@ func (a App) cleanOptionalPath(input string) (string, error) {
 	return clean, nil
 }
 
+func (a App) cleanProjectDirectoryPath(input string) (string, error) {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		return "", errors.New("destination path is required")
+	}
+	if a.sshName != "" {
+		target := raw
+		if pathpkg.IsAbs(target) {
+			relative := relativeSlashPath(pathpkg.Clean(a.root), pathpkg.Clean(target))
+			if relative == ".." || strings.HasPrefix(relative, "../") {
+				return "", errors.New("destination must be inside the current project")
+			}
+			target = relative
+		}
+		clean := pathpkg.Clean(target)
+		if clean == "." {
+			return "", nil
+		}
+		if clean == ".." || strings.HasPrefix(clean, "../") {
+			return "", errors.New("destination must be inside the current project")
+		}
+		return clean, nil
+	}
+
+	target := raw
+	if filepath.IsAbs(target) {
+		root, err := filepath.Abs(a.root)
+		if err != nil {
+			return "", err
+		}
+		target, err = filepath.Abs(target)
+		if err != nil {
+			return "", err
+		}
+		relative, err := filepath.Rel(root, target)
+		if err != nil {
+			return "", err
+		}
+		if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return "", errors.New("destination must be inside the current project")
+		}
+		target = relative
+	}
+	clean := filepath.Clean(target)
+	if clean == "." {
+		return "", nil
+	}
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", errors.New("destination must be inside the current project")
+	}
+	return clean, nil
+}
+
 func (a App) resolveOpenFilePath(input string) (OpenFileResponse, error) {
 	raw := strings.TrimSpace(input)
 	if raw == "" {

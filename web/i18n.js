@@ -53,6 +53,8 @@
     'Copy Relative Path': '复制相对路径',
     'Copy Absolute Path': '复制绝对路径',
     'Download': '下载',
+    'Move...': '移动…',
+    'Move': '移动',
     'Rename': '重命名',
     'Delete': '删除',
     'Save As...': '另存为…',
@@ -118,6 +120,9 @@
     'Copied absolute path': '已复制绝对路径',
     'Terminal selection copied': '已复制终端内容',
     'Renamed': '已重命名',
+    'Moved': '已移动',
+    'Moving...': '正在移动…',
+    'Destination path is required': '目标路径不能为空',
     'Folder created': '文件夹已创建',
     'File created': '文件已创建',
     'Deleting...': '正在删除…',
@@ -149,6 +154,10 @@
     if (match) return `上传到 ${match[1]}`;
     match = value.match(/^Rename (File|Folder)$/);
     if (match) return `重命名${match[1] === 'File' ? '文件' : '文件夹'}`;
+    match = value.match(/^Move (File|Folder)$/);
+    if (match) return `移动${match[1] === 'File' ? '文件' : '文件夹'}`;
+    match = value.match(/^Enter a destination folder for "(.+)"\. Use an absolute path inside the current project, or a path relative to the project root\.$/);
+    if (match) return `请输入“${match[1]}”的目标文件夹。可使用当前项目内的绝对路径，或相对于项目根目录的路径。`;
     match = value.match(/^Delete (File|Folder)$/);
     if (match) return `删除${match[1] === 'File' ? '文件' : '文件夹'}`;
     match = value.match(/^Save the contents of "(.+)" before closing\?$/);

@@ -603,6 +603,101 @@ func (a App) handleRenamePath(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, err)
 }
 
+func (a App) handleMovePath(w http.ResponseWriter, r *http.Request) {
+	app, err := a.appForRequest(r)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	var req MovePathRequest
+	if err := decodeJSONBody(w, r, &req, maxJSONRequestBytes); err != nil {
+		writeRequestError(w, err)
+		return
+	}
+
+	path, err := app.cleanPath(req.Path)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	destinationDirectory, err := app.cleanProjectDirectoryPath(req.Destination)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if isGitPath(path) || isGitPath(destinationDirectory) {
+		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
+
+	destination := filepath.Join(destinationDirectory, filepath.Base(path))
+	if filepath.Clean(path) == filepath.Clean(destination) {
+		writeJSON(w, nil, errors.New("source and destination are the same"))
+		return
+	}
+	if isGitPath(destination) {
+		writeJSON(w, nil, errors.New("cannot modify .git paths"))
+		return
+	}
+
+	if app.sshName != "" {
+		if err := app.moveRemotePath(filepath.ToSlash(path), filepath.ToSlash(destinationDirectory), filepath.ToSlash(destination)); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		status, err := app.status()
+		writeJSON(w, MovePathResponse{Path: filepath.ToSlash(destination), Status: status}, err)
+		return
+	}
+
+	resolvedSourceParent, err := app.existingDirectory(filepath.Dir(path))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	resolvedDestinationDirectory, err := app.existingDirectory(destinationDirectory)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	sourcePath := filepath.Join(resolvedSourceParent, filepath.Base(path))
+	destinationPath := filepath.Join(resolvedDestinationDirectory, filepath.Base(path))
+	sourceInfo, err := os.Lstat(sourcePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeJSON(w, nil, fmt.Errorf("path does not exist: %s", path))
+			return
+		}
+		writeJSON(w, nil, err)
+		return
+	}
+	if sourceInfo.IsDir() && sourceInfo.Mode()&os.ModeSymlink == 0 {
+		relative, err := filepath.Rel(sourcePath, resolvedDestinationDirectory)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+			writeJSON(w, nil, errors.New("cannot move a folder into itself"))
+			return
+		}
+	}
+	if _, err := os.Lstat(destinationPath); err == nil {
+		writeJSON(w, nil, fmt.Errorf("path already exists: %s", filepath.ToSlash(destination)))
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, nil, err)
+		return
+	}
+	if err := os.Rename(sourcePath, destinationPath); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	status, err := app.status()
+	writeJSON(w, MovePathResponse{Path: filepath.ToSlash(destination), Status: status}, err)
+}
+
 func (a App) handleDeletePath(w http.ResponseWriter, r *http.Request) {
 	app, err := a.appForRequest(r)
 	if err != nil {

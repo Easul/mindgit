@@ -77,6 +77,7 @@ func runApplication(args []string) error {
 	mux.HandleFunc("GET /api/fs", app.handleOpenFile)
 	mux.HandleFunc("POST /api/fs", app.handleCreatePath)
 	mux.HandleFunc("PATCH /api/fs", app.handleRenamePath)
+	mux.HandleFunc("PUT /api/fs", app.handleMovePath)
 	mux.HandleFunc("DELETE /api/fs", app.handleDeletePath)
 	mux.HandleFunc("DELETE /api/stage", app.handleRestoreStaged)
 	mux.HandleFunc("GET /api/search", app.handleSearch)
