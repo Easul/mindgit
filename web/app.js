@@ -898,7 +898,9 @@ async function refresh() {
         setMessage('Git not available for this folder', 'error');
         return;
       }
-      await loadHistory();
+      // The status was fetched above; avoid running the full Git status scan
+      // a second time before loading the commit list.
+      await loadHistory({ refreshStatus: false });
       renderHistory();
       renderSplitPane();
       setMessage('Updated', 'ok');

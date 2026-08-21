@@ -1,5 +1,7 @@
-async function loadHistory() {
-  state.status = await api('/api/status');
+async function loadHistory(options = {}) {
+  if (options.refreshStatus !== false || !state.status || !state.status.gitAvailable) {
+    state.status = await api('/api/status');
+  }
   const data = await api('/api/commits?limit=50');
   state.history = data.commits || [];
   if (!state.history.length) {
@@ -112,7 +114,8 @@ async function restoreStagedFile(path) {
       body: JSON.stringify({ path }),
     });
     await refreshLoadedGroups();
-    await loadHistory();
+    // The stage endpoint already returned the fresh status snapshot.
+    await loadHistory({ refreshStatus: false });
     renderHistory();
     setMessage('Staged file restored', 'ok');
   } catch (error) {

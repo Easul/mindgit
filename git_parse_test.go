@@ -26,6 +26,23 @@ func TestParseStatus(t *testing.T) {
 	}
 }
 
+func TestParseStatusPreservesUnicodePaths(t *testing.T) {
+	stats := map[string][2]int{
+		"文档/新建.md": {2, 0},
+	}
+
+	got := parseStatus("?? 文档/新建.md\n", stats)
+	if len(got) != 1 {
+		t.Fatalf("parseStatus() returned %d files, want 1", len(got))
+	}
+	if got[0].Path != "文档/新建.md" {
+		t.Fatalf("parseStatus() path = %q, want Unicode path", got[0].Path)
+	}
+	if got[0].Additions != 2 {
+		t.Fatalf("parseStatus() additions = %d, want 2", got[0].Additions)
+	}
+}
+
 func TestParseCommitOutput(t *testing.T) {
 	commits := parseCommits("full1\x1fshort1\x1fAlice\x1falice@example.com\x1f2026-07-15T10:00:00Z\x1fFirst commit\x1efull2\x1fshort2\x1fBob\x1fbob@example.com\x1f2026-07-14T10:00:00Z\x1fSecond commit\x1e")
 	if len(commits) != 2 {

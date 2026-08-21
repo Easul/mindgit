@@ -12,6 +12,7 @@ import (
 )
 
 func (a App) run(name string, args ...string) (output string, runErr error) {
+	args = commandArgs(name, args)
 	ctx, cancel := a.commandContext()
 	defer cancel()
 	started := time.Now()
@@ -73,6 +74,7 @@ func (a App) run(name string, args ...string) (output string, runErr error) {
 }
 
 func (a App) runInput(input string, name string, args ...string) (output string, runErr error) {
+	args = commandArgs(name, args)
 	ctx, cancel := a.commandContext()
 	defer cancel()
 	started := time.Now()
@@ -133,6 +135,18 @@ func (a App) runInput(input string, name string, args ...string) (output string,
 		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), runErr, message)
 	}
 	return stdout.String(), nil
+}
+
+// Git quotes non-ASCII paths by default (for example, Chinese characters as
+// octal escapes). Keep command output in the same UTF-8 path format returned by
+// the filesystem so status and tree entries can be joined reliably.
+func commandArgs(name string, args []string) []string {
+	if name != "git" {
+		return args
+	}
+	configured := make([]string, 0, len(args)+2)
+	configured = append(configured, "-c", "core.quotePath=false")
+	return append(configured, args...)
 }
 
 func (a App) runManagedCommand(cmd *exec.Cmd, cancel context.CancelFunc, name string, args []string) error {
