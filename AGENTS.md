@@ -15,6 +15,9 @@ MindGit is a small Go web application. `main.go` contains the HTTP API, Git comm
 
 - Keep the app dependency-light; prefer the Go standard library and plain HTML/CSS/JS.
 - Preserve the single-binary model. Static files under `web/` are embedded with Go embed.
+- Git commands that return repository paths must run with `-c core.quotePath=false` so
+  non-ASCII filesystem names stay in the same UTF-8 form as `os.ReadDir` results and can be
+  matched to file-tree entries.
 - Do not commit generated files from `dist/`, local Playwright captures, or `temp/`.
 - Keep CLI flags paired as short and long forms, for example `-p` and `--port`.
 - Validate UI changes through the browser surface, not only by reading source.
