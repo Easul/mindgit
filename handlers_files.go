@@ -447,7 +447,7 @@ func (a App) handleSaveFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	status, err := app.status()
+	status, err := app.statusForSave()
 	writeJSON(w, status, err)
 }
 

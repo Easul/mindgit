@@ -27,3 +27,21 @@ func TestProjectCacheExpiresOldSnapshot(t *testing.T) {
 		t.Fatal("expected old snapshot to expire")
 	}
 }
+
+func TestProjectCacheReturnsStatusSnapshot(t *testing.T) {
+	cache := NewProjectCache()
+	status := StatusResponse{
+		Root:  "/tmp/project",
+		Files: []ChangedFile{{Path: "one.txt", Status: "M"}},
+	}
+	cache.storeStatus("local", status)
+	cached, ok := cache.loadStatus("local")
+	if !ok || len(cached.Files) != 1 {
+		t.Fatalf("unexpected status cache result: %#v, ok=%v", cached, ok)
+	}
+	cached.Files[0].Path = "changed.txt"
+	cachedAgain, ok := cache.loadStatus("local")
+	if !ok || cachedAgain.Files[0].Path != "one.txt" {
+		t.Fatalf("status cache snapshot was mutated: %#v", cachedAgain)
+	}
+}

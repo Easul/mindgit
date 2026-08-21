@@ -845,8 +845,10 @@ async function saveFile() {
       renderFileTabs();
     } else {
       state.status = result;
-      await refreshLoadedGroups();
       renderStatus();
+      // Saving should not wait for the full Git status scan. Refresh the
+      // sidebar in the background so the response remains responsive.
+      void refreshWorkspaceOutline();
     }
 
     if (editor) {

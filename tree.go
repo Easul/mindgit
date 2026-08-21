@@ -82,6 +82,14 @@ func (a App) handleTreeBatch(w http.ResponseWriter, r *http.Request) {
 
 func (a App) status() (StatusResponse, error) {
 	gitAvailable, files, err := a.loadGitChanges()
+	status, err := a.statusFromGit(gitAvailable, files, err)
+	if err == nil {
+		a.cache.storeStatus(a.defaultProject, status)
+	}
+	return status, err
+}
+
+func (a App) statusFromGit(gitAvailable bool, files []ChangedFile, err error) (StatusResponse, error) {
 	if err != nil {
 		return StatusResponse{}, err
 	}
@@ -129,6 +137,17 @@ func (a App) status() (StatusResponse, error) {
 	}
 
 	return response, nil
+}
+
+func (a App) statusForSave() (StatusResponse, error) {
+	if status, ok := a.cache.loadStatus(a.defaultProject); ok {
+		return status, nil
+	}
+	gitAvailable, files, ok := a.cache.loadGitSnapshot(a.defaultProject)
+	if !ok {
+		return a.status()
+	}
+	return a.statusFromGit(gitAvailable, files, nil)
 }
 
 func (a App) loadGitChanges() (bool, []ChangedFile, error) {
