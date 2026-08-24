@@ -91,7 +91,7 @@ Run it:
 ./mindgit --config ./config.json
 ```
 
-Build stripped Linux, macOS, Windows, and Android/Termux release artifacts:
+Build stripped Linux (amd64 and 32-bit ARMv7), macOS, Windows, and Android/Termux release artifacts:
 
 ```bash
 scripts/build.sh

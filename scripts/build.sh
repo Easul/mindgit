@@ -28,23 +28,29 @@ done < <(find "${root_dir}/web" -type f -print0)
 build() {
   local goos="$1"
   local goarch="$2"
-  local binary="mindgit-${goos}-${goarch}"
+  local artifact_arch="${3:-${goarch}}"
+  local goarm="${4:-}"
+  local binary="mindgit-${goos}-${artifact_arch}"
   local output="${dist_dir}/${binary}"
 
   if [[ "${goos}" == "windows" ]]; then
     output="${output}.exe"
   fi
 
-  CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
-    go build -tags=compressedassets -trimpath \
-      -ldflags="-s -w -X main.version=${version}" \
-      -o "${output}" "${root_dir}"
+  local -a build_env=("CGO_ENABLED=0" "GOOS=${goos}" "GOARCH=${goarch}")
+  if [[ -n "${goarm}" ]]; then
+    build_env+=("GOARM=${goarm}")
+  fi
+
+  env "${build_env[@]}" go build -tags=compressedassets -trimpath \
+    -ldflags="-s -w -X main.version=${version}" \
+    -o "${output}" "${root_dir}"
 }
 
 package() {
   local goos="$1"
-  local goarch="$2"
-  local binary="mindgit-${goos}-${goarch}"
+  local artifact_arch="$2"
+  local binary="mindgit-${goos}-${artifact_arch}"
 
   if [[ "${goos}" == "windows" ]]; then
     (cd "${dist_dir}" && zip -q "${binary}.zip" "${binary}.exe")
@@ -54,11 +60,13 @@ package() {
 }
 
 build linux amd64
+build linux arm armv7 7
 build darwin amd64
 build windows amd64
 build android arm64
 
 package linux amd64
+package linux armv7
 package darwin amd64
 package windows amd64
 package android arm64

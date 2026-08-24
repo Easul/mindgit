@@ -91,7 +91,7 @@ go build -trimpath -ldflags="-s -w" -o mindgit .
 ./mindgit --config ./config.json
 ```
 
-构建 Linux、macOS、Windows 和 Android/Termux 发布包：
+构建 Linux（amd64 和 32 位 ARMv7）、macOS、Windows 和 Android/Termux 发布包：
 
 ```bash
 scripts/build.sh

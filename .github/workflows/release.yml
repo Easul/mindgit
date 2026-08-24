@@ -36,6 +36,8 @@ jobs:
           files: |
             dist/mindgit-linux-amd64
             dist/mindgit-linux-amd64.tar.gz
+            dist/mindgit-linux-armv7
+            dist/mindgit-linux-armv7.tar.gz
             dist/mindgit-darwin-amd64
             dist/mindgit-darwin-amd64.tar.gz
             dist/mindgit-windows-amd64.exe
