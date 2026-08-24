@@ -17,6 +17,8 @@ function setupEditorShortcuts(editor) {
   let undoStack = [createHistoryState()];
   let redoStack = [];
   let lastValue = editor.value;
+  let pendingHistoryInput = null;
+  let historyGroup = null;
   const historyBudget = 8 * 1024 * 1024;
   let isUndoRedo = false;
   let linkModifierActive = false;
@@ -40,6 +42,13 @@ function setupEditorShortcuts(editor) {
     : null;
 
   resizeObserver?.observe(editor);
+  window.addEventListener('resize', () => {
+    requestAnimationFrame(() => {
+      clearEditorWrapLayoutCache(editor);
+      syncEditorLineNumberLayout(editor, lineNumbersEl, LINE_HEIGHT);
+      renderEditorFindHighlights(findBar);
+    });
+  }, listenerOptions);
 
   function hideEditorLinkHint() {
     hoveredLinkTarget = null;
@@ -136,12 +145,44 @@ function setupEditorShortcuts(editor) {
     };
   }
 
-  function recordHistoryState() {
+  function historyGroupKind(inputType) {
+    if (['insertText', 'insertCompositionText', 'insertFromComposition'].includes(inputType)) return 'typing';
+    if (inputType === 'deleteContentBackward') return 'backspace';
+    if (inputType === 'deleteContentForward') return 'delete';
+    return '';
+  }
+
+  function recordHistoryState(input = null) {
     if (editor.value === lastValue) return;
-    undoStack.push(createHistoryState());
+    const nextState = createHistoryState();
+    const kind = historyGroupKind(input?.inputType);
+    const contiguous = kind === 'typing'
+      ? input.start === historyGroup?.end && input.end === historyGroup?.end
+      : input.start === historyGroup?.start && input.end === historyGroup?.end;
+    const canMerge = Boolean(
+      kind
+      && historyGroup?.kind === kind
+      && input.time - historyGroup.time < 1500
+      && contiguous
+      && undoStack.length > 1
+    );
+
+    if (canMerge) {
+      undoStack[undoStack.length - 1] = nextState;
+    } else {
+      undoStack.push(nextState);
+    }
     trimHistory();
     redoStack = [];
     lastValue = editor.value;
+    historyGroup = kind
+      ? {
+        kind,
+        time: input.time,
+        start: nextState.start,
+        end: nextState.end,
+      }
+      : null;
   }
 
   function trimHistory() {
@@ -157,6 +198,8 @@ function setupEditorShortcuts(editor) {
     undoStack = [createHistoryState()];
     redoStack = [];
     lastValue = editor.value;
+    pendingHistoryInput = null;
+    historyGroup = null;
   }
 
   function recordSelectionHistoryState() {
@@ -174,6 +217,7 @@ function setupEditorShortcuts(editor) {
     undoStack.push(createHistoryState());
     trimHistory();
     redoStack = [];
+    historyGroup = null;
   }
 
   function restoreHistoryState(historyState) {
@@ -194,7 +238,7 @@ function setupEditorShortcuts(editor) {
 
   function commitEditorChange() {
     updateEditor();
-    recordHistoryState();
+    recordHistoryState(null);
   }
 
   function clearBlockSelection() {
@@ -281,7 +325,7 @@ function setupEditorShortcuts(editor) {
   }, listenerOptions);
   editor.addEventListener('input', () => {
     if (lineHighlight) lineHighlight.style.display = 'none';
-    if (!editor._mindgitPreserveBlockSelection) {
+    if (!editor._mindgitPreserveBlockSelection && !editor._mindgitMultiCaretComposition) {
       clearBlockSelection();
     }
     clearEditorMeasurementCache(editor);
@@ -289,15 +333,40 @@ function setupEditorShortcuts(editor) {
   });
   editor.addEventListener('compositionstart', () => {
     editor._mindgitComposing = true;
+    if (blockSelection && isMultiLineBlockSelection(blockSelection)) {
+      recordSelectionHistoryState();
+      editor._mindgitMultiCaretComposition = {
+        value: editor.value,
+        selection: cloneBlockSelection(blockSelection),
+      };
+    }
   });
   editor.addEventListener('compositionend', () => {
-    queueMicrotask(() => {
+    setTimeout(() => {
+      if (!editor.isConnected) return;
+      const multiCaretComposition = editor._mindgitMultiCaretComposition;
+      editor._mindgitMultiCaretComposition = null;
+      if (multiCaretComposition) {
+        const replacement = changedTextBetween(multiCaretComposition.value, editor.value);
+        editor.value = multiCaretComposition.value;
+        lastValue = multiCaretComposition.value;
+        setBlockSelection(multiCaretComposition.selection);
+        if (replacement !== null) {
+          applyBlockSelectionResult(replaceBlockSelectionText(
+            editor,
+            multiCaretComposition.selection,
+            replacement,
+          ));
+        } else {
+          updateEditor();
+        }
+      }
       editor._mindgitComposing = false;
       editor._mindgitPendingRemoteContent = null;
       if (!editor._mindgitApplyingRemote && state.selected) {
         broadcastEditorContent(state.selected, editor.value);
       }
-    });
+    }, 0);
   });
   const flushSelectionHighlights = () => {
     selectionHighlightFrame = 0;
@@ -368,14 +437,19 @@ function setupEditorShortcuts(editor) {
 
   editor.addEventListener('input', () => {
     updateEditor();
+    if (editor._mindgitMultiCaretComposition) return;
     if (editor._mindgitApplyingRemote) {
       resetHistoryState();
       isUndoRedo = false;
       return;
     }
     if (!isUndoRedo && editor.value !== lastValue) {
-      recordHistoryState();
+      recordHistoryState(pendingHistoryInput);
     }
+    if (pendingHistoryInput?.inputType === 'insertLineBreak' || pendingHistoryInput?.inputType === 'insertParagraph') {
+      revealMobileLineStart(editor);
+    }
+    pendingHistoryInput = null;
     isUndoRedo = false;
   });
 
@@ -423,6 +497,12 @@ function setupEditorShortcuts(editor) {
   };
 
   editor.addEventListener('beforeinput', (event) => {
+    pendingHistoryInput = {
+      inputType: event.inputType,
+      start: editor.selectionStart,
+      end: editor.selectionEnd,
+      time: performance.now(),
+    };
     if (!blockSelection || !isMultiLineBlockSelection(blockSelection) || event.isComposing) return;
 
     if (
@@ -472,16 +552,23 @@ function setupEditorShortcuts(editor) {
   });
 
   editor.addEventListener('pointerdown', (event) => {
+    historyGroup = null;
     if (!event.shiftKey || !event.altKey) return;
     event.preventDefault();
     editor.focus();
 
     const focus = getMouseRowCol(editor, event, LINE_HEIGHT);
-    const anchor = blockSelection?.anchor || focus;
-    setBlockSelection(createColumnBlockSelection(anchor, focus));
+    const initialSelection = cloneBlockSelection(blockSelection);
+    const initialX = event.clientX;
+    const initialY = event.clientY;
+    let dragging = false;
+    setBlockSelection(addBlockSelectionCaret(editor, initialSelection, focus));
 
     const move = (moveEvent) => {
-      setBlockSelection(createColumnBlockSelection(anchor, getMouseRowCol(editor, moveEvent, LINE_HEIGHT)));
+      if (!dragging && Math.hypot(moveEvent.clientX - initialX, moveEvent.clientY - initialY) < 4) return;
+      dragging = true;
+      const nextFocus = getMouseRowCol(editor, moveEvent, LINE_HEIGHT);
+      setBlockSelection(addBlockSelectionColumn(editor, initialSelection, focus, nextFocus));
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
@@ -504,6 +591,10 @@ function setupEditorShortcuts(editor) {
       && !e.altKey
       && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Enter' || e.key === 'Process' || e.isComposing);
 
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+      historyGroup = null;
+    }
+
     if (blockSelection && isModifierOnlyKey) {
       renderBlockSelection(editor, blockSelectionOverlay, blockSelection, LINE_HEIGHT);
       return;
@@ -511,6 +602,7 @@ function setupEditorShortcuts(editor) {
 
     if (isCtrl && key === 'z' && !e.shiftKey) {
       e.preventDefault();
+      historyGroup = null;
       if (undoStack.length > 1) {
         redoStack.push(undoStack.pop());
         const prevState = undoStack[undoStack.length - 1];
@@ -522,6 +614,7 @@ function setupEditorShortcuts(editor) {
 
     if (isCtrl && ((e.shiftKey && key === 'z') || key === 'y')) {
       e.preventDefault();
+      historyGroup = null;
       if (redoStack.length > 0) {
         const nextState = redoStack.pop();
         undoStack.push(nextState);
@@ -593,27 +686,7 @@ function setupEditorShortcuts(editor) {
 
     if (e.altKey && !e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault();
-      state.wordWrap = !state.wordWrap;
-      localStorage.setItem('mindgit-wordwrap', state.wordWrap);
-
-      const wrapClass = state.wordWrap ? 'wrap-enabled' : 'wrap-disabled';
-      const removeClass = state.wordWrap ? 'wrap-disabled' : 'wrap-enabled';
-
-      editor.classList.remove(removeClass);
-      editor.classList.add(wrapClass);
-      if (highlightEl) {
-        highlightEl.classList.remove(removeClass);
-        highlightEl.classList.add(wrapClass);
-      }
-
-      clearEditorWrapLayoutCache(editor);
-      syncEditorLineNumberLayout(editor, lineNumbersEl, LINE_HEIGHT);
-      if (lineHighlight && lineHighlight.style.display !== 'none') {
-        const cursorLine = getCurrentLine(editor).lineIndex + 1;
-        updateCurrentLineHighlight(cursorLine);
-      }
-
-      setMessage(state.wordWrap ? 'Word wrap enabled' : 'Word wrap disabled', 'ok');
+      setEditorWordWrap(!state.wordWrap);
       return;
     }
 
@@ -677,6 +750,7 @@ function setupEditorShortcuts(editor) {
       recordSelectionHistoryState();
       insertIndentedNewline(editor);
       commitEditorChange();
+      revealMobileLineStart(editor);
     } else if (isCtrl && key === 'f') {
       e.preventDefault();
       showEditorFindBar(findBar);
@@ -1618,7 +1692,10 @@ function getEditorWrappedLineLayout(editor, lineHeight = 20) {
   const style = getComputedStyle(editor);
   const paddingLeft = parseFloat(style.paddingLeft) || 0;
   const paddingRight = parseFloat(style.paddingRight) || 0;
-  const contentWidth = Math.max(0, Math.floor(editor.clientWidth - paddingLeft - paddingRight));
+  // Textarea controls keep a small internal wrap boundary that is not exposed
+  // through clientWidth. A two-pixel allowance prevents a borderline line from
+  // being measured one visual row shorter than the browser renders it.
+  const contentWidth = Math.max(0, Math.floor(editor.clientWidth - paddingLeft - paddingRight - 2));
   const cached = editor._mindgitWrapLayout;
   if (cached && cached.width === contentWidth && cached.value === editor.value) {
     return cached;
@@ -1973,6 +2050,93 @@ function createColumnBlockSelection(anchor, focus) {
     anchor: { row: anchor.row, col: anchor.col },
     focus: { row: focus.row, col: focus.col },
   };
+}
+
+function addBlockSelectionCaret(editor, selection, point) {
+  const ranges = selection ? getBlockSelectionRanges(editor, selection).map((range) => ({
+    row: range.row,
+    anchorCol: range.focusCol,
+    focusCol: range.focusCol,
+  })) : [];
+  const existing = ranges.findIndex((range) => range.row === point.row && range.focusCol === point.col);
+  if (existing >= 0) ranges.splice(existing, 1);
+  else ranges.push({ row: point.row, anchorCol: point.col, focusCol: point.col });
+  ranges.sort((a, b) => a.row - b.row || a.focusCol - b.focusCol);
+  return {
+    ranges,
+    focusIndex: Math.max(0, ranges.findIndex((range) => range.row === point.row && range.focusCol === point.col)),
+  };
+}
+
+function addBlockSelectionColumn(editor, selection, anchor, focus) {
+  const ranges = selection ? getBlockSelectionRanges(editor, selection).map((range) => ({
+    row: range.row,
+    anchorCol: range.focusCol,
+    focusCol: range.focusCol,
+  })) : [];
+  const startRow = Math.min(anchor.row, focus.row);
+  const endRow = Math.max(anchor.row, focus.row);
+  for (let row = startRow; row <= endRow; row++) {
+    ranges.push({
+      row,
+      anchorCol: anchor.col,
+      focusCol: focus.col,
+    });
+  }
+  ranges.sort((a, b) => a.row - b.row || a.focusCol - b.focusCol);
+  return {
+    ranges,
+    focusIndex: Math.max(0, ranges.findIndex((range) => range.row === focus.row && range.focusCol === focus.col)),
+  };
+}
+
+function changedTextBetween(previous, next) {
+  let start = 0;
+  while (start < previous.length && start < next.length && previous[start] === next[start]) start++;
+  let previousEnd = previous.length;
+  let nextEnd = next.length;
+  while (previousEnd > start && nextEnd > start && previous[previousEnd - 1] === next[nextEnd - 1]) {
+    previousEnd--;
+    nextEnd--;
+  }
+  if (previous.slice(0, start) !== next.slice(0, start) || previous.slice(previousEnd) !== next.slice(nextEnd)) return null;
+  return next.slice(start, nextEnd);
+}
+
+function revealMobileLineStart(editor) {
+  if (!editor || !window.matchMedia('(max-width: 900px)').matches || editor.classList.contains('wrap-enabled')) return;
+  const lineStart = editor.value.lastIndexOf('\n', Math.max(0, editor.selectionStart - 1)) + 1;
+  const style = getComputedStyle(editor);
+  const paddingLeft = parseFloat(style.paddingLeft) || 0;
+  const line = editor.value.slice(lineStart, editor.value.indexOf('\n', lineStart) === -1 ? editor.value.length : editor.value.indexOf('\n', lineStart));
+  const width = getEditorColumnOffset(editor, line, Math.min(editor.selectionStart - lineStart, line.length));
+  const right = width + paddingLeft;
+  if (right <= Math.min(96, editor.clientWidth / 3)) {
+    editor.scrollLeft = 0;
+  } else if (right > editor.scrollLeft + editor.clientWidth - 32) {
+    editor.scrollLeft = Math.max(0, right - editor.clientWidth + 32);
+  }
+}
+
+function setEditorWordWrap(enabled) {
+  state.wordWrap = Boolean(enabled);
+  localStorage.setItem('mindgit-wordwrap', state.wordWrap);
+  const editor = $('editor');
+  const highlightEl = $('editor-highlight');
+  const lineNumbersEl = $('editor-line-numbers');
+  if (!editor) return;
+  const wrapClass = state.wordWrap ? 'wrap-enabled' : 'wrap-disabled';
+  const removeClass = state.wordWrap ? 'wrap-disabled' : 'wrap-enabled';
+  editor.classList.remove(removeClass);
+  editor.classList.add(wrapClass);
+  highlightEl?.classList.remove(removeClass);
+  highlightEl?.classList.add(wrapClass);
+  clearEditorWrapLayoutCache(editor);
+  requestAnimationFrame(() => {
+    syncEditorLineNumberLayout(editor, lineNumbersEl, 20);
+    editor.dispatchEvent(new Event('scroll'));
+  });
+  setMessage(state.wordWrap ? 'Word wrap enabled' : 'Word wrap disabled', 'ok');
 }
 
 function getBlockSelectionRanges(editor, selection) {

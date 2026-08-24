@@ -527,11 +527,17 @@ function isMobileLayout() {
 
 async function openTabMenu(anchor, path) {
   if (isTemporaryTab(path)) {
-    showActionMenu(anchor, [
+    const items = [
       { label: 'Save As...', action: () => saveTemporaryTab(path) },
+    ];
+    if (isMobileLayout()) {
+      items.push({ label: 'Word Wrap', active: state.wordWrap, action: () => setEditorWordWrap(!state.wordWrap) });
+    }
+    items.push(
       { separator: true },
       { label: 'Close Tab', action: () => closeTab(path) },
-    ]);
+    );
+    showActionMenu(anchor, items);
     return;
   }
   const external = isExternalTab(path);
@@ -582,6 +588,15 @@ async function openTabMenu(anchor, path) {
       { separator: true },
       { label: 'Close Split', action: () => closeEmbeddedSplit() },
     );
+  }
+
+  if (isMobileLayout()) {
+    const separatorIndex = items.findIndex((item) => item.separator);
+    items.splice(separatorIndex >= 0 ? separatorIndex : items.length, 0, {
+      label: 'Word Wrap',
+      active: state.wordWrap,
+      action: () => setEditorWordWrap(!state.wordWrap),
+    });
   }
 
   items.push(
