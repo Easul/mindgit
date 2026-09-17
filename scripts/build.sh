@@ -60,12 +60,14 @@ package() {
 }
 
 build linux amd64
+build linux arm64
 build linux arm armv7 7
 build darwin amd64
 build windows amd64
 build android arm64
 
 package linux amd64
+package linux arm64
 package linux armv7
 package darwin amd64
 package windows amd64
